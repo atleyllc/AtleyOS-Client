@@ -8,7 +8,7 @@ export async function unlockWithBiometrics(): Promise<boolean> {
     return true;
   }
   const result = await LocalAuthentication.authenticateAsync({
-    promptMessage: "Unlock AtleyOS",
+    promptMessage: "Unlock AtleyOS Client",
     cancelLabel: "Cancel",
     disableDeviceFallback: false,
   });

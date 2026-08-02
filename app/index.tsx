@@ -24,7 +24,7 @@ export default function Gate() {
     return (
       <View style={styles.center}>
         <ActivityIndicator color={colors.accent} />
-        <Text style={styles.muted}>Starting AtleyOS…</Text>
+        <Text style={styles.muted}>Starting AtleyOS Client…</Text>
       </View>
     );
   }

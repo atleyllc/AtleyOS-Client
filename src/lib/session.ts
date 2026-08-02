@@ -1,7 +1,7 @@
 import * as SecureStore from "expo-secure-store";
 import type { Session } from "./types";
 
-const KEY = "atleyos.session.v1";
+const KEY = "atleyos.client.session.v1";
 
 export async function loadSession(): Promise<Session | null> {
   try {

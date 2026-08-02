@@ -8,8 +8,8 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { ingestObservation } from "./api";
 import type { SyncStatus } from "./types";
 
-const QUEUE_KEY = "atleyos.observation.queue.v1";
-const STATUS_KEY = "atleyos.observation.status.v1";
+const QUEUE_KEY = "atleyos.client.observation.queue.v1";
+const STATUS_KEY = "atleyos.client.observation.status.v1";
 
 export type ObsItem = {
   source_class: string;
@@ -185,7 +185,7 @@ function deviceContext(): ObsItem[] {
     {
       source_class: "device_context",
       title: "Device",
-      body: `${Device.modelName || Device.deviceName || "phone"} · ${Platform.OS} ${Device.osVersion || ""}`,
+      body: `${Device.modelName || Device.deviceName || "client"} · ${Platform.OS} ${Device.osVersion || ""}`,
       metadata: {
         brand: Device.brand,
         isDevice: Device.isDevice,

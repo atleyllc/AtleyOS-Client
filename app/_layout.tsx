@@ -16,7 +16,7 @@ export default function RootLayout() {
       >
         <Stack.Screen name="index" options={{ headerShown: false }} />
         <Stack.Screen name="pair" options={{ title: "Pair with home" }} />
-        <Stack.Screen name="learn" options={{ title: "Learn from this phone" }} />
+        <Stack.Screen name="learn" options={{ title: "Learn from this device" }} />
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
       </Stack>
     </>

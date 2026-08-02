@@ -85,7 +85,7 @@ export async function redeemPairing(
   opts: { deviceLabel: string; platform: string },
 ): Promise<Session> {
   const base = payload.lan_api_base;
-  const res = await rawFetch(base, "/api/mobile/pair/redeem", {
+  const res = await rawFetch(base, "/api/client/pair/redeem", {
     method: "POST",
     body: JSON.stringify({
       code: payload.code,
@@ -119,7 +119,7 @@ export async function redeemPairing(
 async function refreshSession(session: Session): Promise<Session | null> {
   for (const base of bases(session)) {
     try {
-      const res = await rawFetch(base, "/api/mobile/session/refresh", {
+      const res = await rawFetch(base, "/api/client/session/refresh", {
         method: "POST",
         body: JSON.stringify({ refresh_token: session.refreshToken }),
       });
@@ -137,35 +137,35 @@ async function refreshSession(session: Session): Promise<Session | null> {
   return null;
 }
 
-export async function mobileStatus() {
+export async function clientStatus() {
   return apiFetch<{
     ok: boolean;
     reachable: boolean;
     device: Record<string, unknown>;
     remote_access: Record<string, unknown>;
-  }>("/api/mobile/status");
+  }>("/api/client/status");
 }
 
 export async function ingestObservation(items: unknown[]) {
-  return apiFetch<{ ok: boolean; accepted: number }>("/api/mobile/observation", {
+  return apiFetch<{ ok: boolean; accepted: number }>("/api/client/observation", {
     method: "POST",
     body: JSON.stringify({ items }),
   });
 }
 
 export async function postEndpoint(endpoint: string) {
-  return apiFetch("/api/mobile/endpoint", {
+  return apiFetch("/api/client/endpoint", {
     method: "POST",
     body: JSON.stringify({ endpoint }),
   });
 }
 
 export async function revokeSelf() {
-  return apiFetch("/api/mobile/revoke-self", { method: "POST", body: "{}" });
+  return apiFetch("/api/client/revoke-self", { method: "POST", body: "{}" });
 }
 
 export async function homeOpeners() {
-  return apiFetch<{ ok: boolean; apps: HomeApp[] }>("/api/mobile/home-openers");
+  return apiFetch<{ ok: boolean; apps: HomeApp[] }>("/api/client/home-openers");
 }
 
 export async function chatCompletions(
@@ -192,7 +192,7 @@ export async function chatCompletions(
 
 export async function listConversations() {
   return apiFetch<{ ok: boolean; conversations?: unknown[] }>(
-    "/api/mobile/conversations",
+    "/api/client/conversations",
   );
 }
 
@@ -205,7 +205,7 @@ export function parsePairPayload(raw: string): PairPayload {
     return JSON.parse(decodeURIComponent(data)) as PairPayload;
   }
   const parsed = JSON.parse(text) as PairPayload;
-  if (parsed.product !== "atleyos" || parsed.kind !== "mobile_pair") {
+  if (parsed.product !== "atleyos" || parsed.kind !== "client_pair") {
     throw new Error("not_atleyos_pair");
   }
   const expiresSec =

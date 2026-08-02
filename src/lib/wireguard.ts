@@ -15,8 +15,8 @@ import { Platform } from "react-native";
 import { loadSession } from "./session";
 import { postEndpoint } from "./api";
 
-const CONF_KEY = "atleyos.wg.conf.v1";
-const STATE_KEY = "atleyos.wg.state.v1";
+const CONF_KEY = "atleyos.client.wg.conf.v1";
+const STATE_KEY = "atleyos.client.wg.state.v1";
 
 export type TunnelState = {
   status: "down" | "config_ready" | "up" | "error";

@@ -9,7 +9,7 @@ import {
   TextInput,
   View,
 } from "react-native";
-import { chatCompletions, mobileStatus } from "../../src/lib/api";
+import { chatCompletions, clientStatus } from "../../src/lib/api";
 import { openCitationUrl } from "../../src/lib/homeOpeners";
 import { runObservationCycle } from "../../src/lib/observation";
 import type { ChatMessage } from "../../src/lib/types";
@@ -25,7 +25,7 @@ export default function ChatScreen() {
 
   const refreshStatus = useCallback(async () => {
     try {
-      const st = await mobileStatus();
+      const st = await clientStatus();
       setStatusLine(
         st.reachable ? "Connected to home AtleyOS" : "Unreachable",
       );

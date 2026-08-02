@@ -26,7 +26,7 @@ export default function PairScreen() {
     try {
       const payload = parsePairPayload(raw);
       const session = await redeemPairing(payload, {
-        deviceLabel: `${Platform.OS} phone`,
+        deviceLabel: `${Platform.OS} client`,
         platform: Platform.OS,
       });
       await saveWgConf(session.wgClientConf);
@@ -75,7 +75,7 @@ export default function PairScreen() {
         value={manual}
         onChangeText={setManual}
         placeholderTextColor={colors.muted}
-        placeholder='{"product":"atleyos","kind":"mobile_pair",...}'
+        placeholder='{"product":"atleyos","kind":"client_pair",...}'
       />
       <Pressable
         style={[styles.btn, busy && styles.btnDisabled]}

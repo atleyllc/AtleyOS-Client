@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "AtleyOS",
-    "slug": "AtleyOSMobile",
+    "name": "AtleyOS Client",
+    "slug": "AtleyOSClient",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -15,7 +15,7 @@
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.atleyos.mobile",
+      "bundleIdentifier": "com.atleyos.client",
       "infoPlist": {
         "NSCameraUsageDescription": "Scan the Remote Access pair QR from your AtleyOS home server.",
         "NSContactsUsageDescription": "AtleyOS learns people from your contacts on your home server Profile.",
@@ -25,12 +25,15 @@
         "NSLocationAlwaysAndWhenInUseUsageDescription": "AtleyOS may learn significant places in the background when you allow it. Data stays on your home server.",
         "NSPhotoLibraryUsageDescription": "AtleyOS learns photo metadata (and media if granted) into your home Profile.",
         "NSMicrophoneUsageDescription": "Send voice notes to your AtleyOS home server for transcription and Chat.",
-        "NSFaceIDUsageDescription": "Unlock AtleyOS Mobile before Chat and Actions.",
-        "UIBackgroundModes": ["fetch", "processing"]
+        "NSFaceIDUsageDescription": "Unlock AtleyOS Client before Chat and Actions.",
+        "UIBackgroundModes": [
+          "fetch",
+          "processing"
+        ]
       }
     },
     "android": {
-      "package": "com.atleyos.mobile",
+      "package": "com.atleyos.client",
       "adaptiveIcon": {
         "backgroundColor": "#0f1419",
         "foregroundImage": "./assets/android-icon-foreground.png",
@@ -101,7 +104,7 @@
         "origin": false
       },
       "eas": {
-        "projectId": "atleyos-mobile-local"
+        "projectId": "atleyos-client-local"
       }
     }
   }

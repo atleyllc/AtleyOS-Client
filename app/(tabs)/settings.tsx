@@ -69,7 +69,7 @@ export default function SettingsScreen() {
       contentContainerStyle={{ padding: space.md, gap: space.md }}
     >
       <Text style={styles.h}>Device</Text>
-      <Text style={styles.p}>{label || "Paired phone"}</Text>
+      <Text style={styles.p}>{label || "Paired client"}</Text>
 
       <Text style={styles.h}>Tunnel</Text>
       <Text style={styles.p}>
@@ -107,20 +107,20 @@ export default function SettingsScreen() {
 
       <Text style={styles.h}>Privacy</Text>
       <Text style={styles.p}>
-        Data collected on this phone is sent only to your home AtleyOS over the
+        Data collected on this device is sent only to your home AtleyOS over the
         encrypted overlay. See docs/STORE_PRIVACY.md and docs/THREAT_MODEL.md.
       </Text>
 
       <Pressable
         style={[styles.btn, styles.danger]}
         onPress={() =>
-          Alert.alert("Revoke this device?", "Home will drop WG peer + tokens.", [
+          Alert.alert("Revoke this client?", "Home will drop WG peer + tokens.", [
             { text: "Cancel", style: "cancel" },
             { text: "Revoke", style: "destructive", onPress: () => void onRevoke() },
           ])
         }
       >
-        <Text style={styles.btnText}>Revoke device</Text>
+        <Text style={styles.btnText}>Revoke client</Text>
       </Pressable>
     </ScrollView>
   );

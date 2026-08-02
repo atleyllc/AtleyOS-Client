@@ -43,7 +43,7 @@ export default function LearnScreen() {
 
   return (
     <View style={styles.root}>
-      <Text style={styles.title}>Allow AtleyOS to learn from this phone</Text>
+      <Text style={styles.title}>Allow AtleyOS to learn from this device</Text>
       <Text style={styles.lede}>
         So it can help you better. Data stays on your home AtleyOS — not a cloud
         landlord. You can revoke sources or this device anytime in Settings.
