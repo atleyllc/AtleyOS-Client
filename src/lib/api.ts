@@ -12,7 +12,6 @@ export class ApiError extends Error {
 }
 
 function bases(session: Session): string[] {
-  // Prefer overlay when WG is up; always fall back to LAN for house use.
   const list = [session.overlayApiBase, session.lanApiBase].filter(Boolean);
   return [...new Set(list)];
 }
@@ -38,6 +37,19 @@ async function rawFetch(
   });
 }
 
+/** Prefer /api/client/*; fall back to legacy /api/mobile/* on older hosts. */
+async function clientFetch(
+  base: string,
+  clientPath: string,
+  init: RequestInit & { token?: string } = {},
+): Promise<Response> {
+  const primary = await rawFetch(base, clientPath, init);
+  if (primary.status !== 404) return primary;
+  const legacy = clientPath.replace(/^\/api\/client\//, "/api/mobile/");
+  if (legacy === clientPath) return primary;
+  return rawFetch(base, legacy, init);
+}
+
 export async function apiFetch<T = unknown>(
   path: string,
   init: RequestInit & { token?: string; session?: Session | null } = {},
@@ -48,7 +60,9 @@ export async function apiFetch<T = unknown>(
   let lastErr: unknown;
   for (const base of tryBases) {
     try {
-      const res = await rawFetch(base, path, { ...init, token });
+      const res = path.startsWith("/api/client/")
+        ? await clientFetch(base, path, { ...init, token })
+        : await rawFetch(base, path, { ...init, token });
       const text = await res.text();
       let body: unknown = null;
       try {
@@ -85,14 +99,15 @@ export async function redeemPairing(
   opts: { deviceLabel: string; platform: string },
 ): Promise<Session> {
   const base = payload.lan_api_base;
-  const res = await rawFetch(base, "/api/client/pair/redeem", {
+  const bodyJson = JSON.stringify({
+    code: payload.code,
+    pair_secret: payload.pair_secret,
+    device_label: opts.deviceLabel,
+    platform: opts.platform,
+  });
+  const res = await clientFetch(base, "/api/client/pair/redeem", {
     method: "POST",
-    body: JSON.stringify({
-      code: payload.code,
-      pair_secret: payload.pair_secret,
-      device_label: opts.deviceLabel,
-      platform: opts.platform,
-    }),
+    body: bodyJson,
   });
   const body = (await res.json()) as Record<string, unknown>;
   if (!res.ok || !body.ok) {
@@ -119,7 +134,7 @@ export async function redeemPairing(
 async function refreshSession(session: Session): Promise<Session | null> {
   for (const base of bases(session)) {
     try {
-      const res = await rawFetch(base, "/api/client/session/refresh", {
+      const res = await clientFetch(base, "/api/client/session/refresh", {
         method: "POST",
         body: JSON.stringify({ refresh_token: session.refreshToken }),
       });
@@ -205,7 +220,9 @@ export function parsePairPayload(raw: string): PairPayload {
     return JSON.parse(decodeURIComponent(data)) as PairPayload;
   }
   const parsed = JSON.parse(text) as PairPayload;
-  if (parsed.product !== "atleyos" || parsed.kind !== "client_pair") {
+  const kindOk =
+    parsed.kind === "client_pair" || parsed.kind === "mobile_pair";
+  if (parsed.product !== "atleyos" || !kindOk) {
     throw new Error("not_atleyos_pair");
   }
   const expiresSec =

@@ -26,10 +26,7 @@
         "NSPhotoLibraryUsageDescription": "AtleyOS learns photo metadata (and media if granted) into your home Profile.",
         "NSMicrophoneUsageDescription": "Send voice notes to your AtleyOS home server for transcription and Chat.",
         "NSFaceIDUsageDescription": "Unlock AtleyOS Client before Chat and Actions.",
-        "UIBackgroundModes": [
-          "fetch",
-          "processing"
-        ]
+        "UIBackgroundModes": ["fetch", "processing"]
       }
     },
     "android": {

@@ -2,17 +2,23 @@
 
 Companion for EUDs (iOS / Android). One AtleyOS server, many clients.
 
+Run once on **iOS** and once on **Android**.
+
 | # | Step | iOS | Android |
 |---|------|-----|---------|
-| 1 | Home Remote Access enabled | | |
-| 2 | Pair QR visible | | |
-| 3 | Install AtleyOS Client | | |
-| 4 | Pair on home Wi‑Fi | | |
-| 5 | API reachable | | |
-| 6 | Learning permissions | | |
-| 7 | Chat works | | |
-| 8 | Observation sync | | |
-| 9 | Off-LAN / cellular | | |
-| 10 | Chat off-LAN | | |
-| 11 | Revoke client | | |
-| 12 | No WAN port exposure | | |
+| 1 | Home: Owner logged in; Settings → Remote Access → Enable | | |
+| 2 | Pair QR / payload visible | | |
+| 3 | Install AtleyOS Client build | | |
+| 4 | Scan QR on home Wi‑Fi; pairing succeeds | | |
+| 5 | Tunnel config ready / WG up; API reachable | | |
+| 6 | Learning consent → OS permission prompts | | |
+| 7 | Chat: send message; reply from home | | |
+| 8 | Observation sync status shows activity | | |
+| 9 | Cellular / off-LAN: hole punch or Owner relay | | |
+| 10 | Chat still works off-LAN | | |
+| 11 | Home revoke → client loses access | | |
+| 12 | WAN scan: no AtleyOS client API on router WAN | | |
+
+**Exit:** all rows green on both columns (or Owner-relay documented for row 9).
+
+Friend-test: enable Remote Access → install on iPhone **and** Android → pair → allow all learning → Chat from cellular → confirm sync → revoke.
