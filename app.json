@@ -1,0 +1,108 @@
+{
+  "expo": {
+    "name": "AtleyOS",
+    "slug": "AtleyOSMobile",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "scheme": "atleyos",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0f1419"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.atleyos.mobile",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Scan the Remote Access pair QR from your AtleyOS home server.",
+        "NSContactsUsageDescription": "AtleyOS learns people from your contacts on your home server Profile.",
+        "NSCalendarsUsageDescription": "AtleyOS learns routines from your calendar on your home server Profile.",
+        "NSRemindersUsageDescription": "AtleyOS learns tasks from reminders on your home server Profile.",
+        "NSLocationWhenInUseUsageDescription": "AtleyOS learns significant places to help you better. Data stays on your home server.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "AtleyOS may learn significant places in the background when you allow it. Data stays on your home server.",
+        "NSPhotoLibraryUsageDescription": "AtleyOS learns photo metadata (and media if granted) into your home Profile.",
+        "NSMicrophoneUsageDescription": "Send voice notes to your AtleyOS home server for transcription and Chat.",
+        "NSFaceIDUsageDescription": "Unlock AtleyOS Mobile before Chat and Actions.",
+        "UIBackgroundModes": ["fetch", "processing"]
+      }
+    },
+    "android": {
+      "package": "com.atleyos.mobile",
+      "adaptiveIcon": {
+        "backgroundColor": "#0f1419",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "permissions": [
+        "CAMERA",
+        "READ_CONTACTS",
+        "READ_CALENDAR",
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION",
+        "READ_EXTERNAL_STORAGE",
+        "READ_MEDIA_IMAGES",
+        "READ_MEDIA_VIDEO",
+        "RECORD_AUDIO",
+        "USE_BIOMETRIC",
+        "USE_FINGERPRINT",
+        "INTERNET",
+        "ACCESS_NETWORK_STATE",
+        "FOREGROUND_SERVICE",
+        "POST_NOTIFICATIONS"
+      ]
+    },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Scan the Remote Access pair QR from your AtleyOS home server."
+        }
+      ],
+      [
+        "expo-contacts",
+        {
+          "contactsPermission": "AtleyOS learns people from your contacts on your home server Profile."
+        }
+      ],
+      [
+        "expo-calendar",
+        {
+          "calendarPermission": "AtleyOS learns routines from your calendar on your home server Profile."
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "AtleyOS learns significant places. Data stays on your home server.",
+          "locationAlwaysAndWhenInUsePermission": "AtleyOS may learn significant places in the background. Data stays on your home server."
+        }
+      ],
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "AtleyOS learns photo metadata into your home Profile.",
+          "savePhotosPermission": "AtleyOS does not save to your library by default.",
+          "isAccessMediaLocationEnabled": true
+        }
+      ],
+      "expo-local-authentication"
+    ],
+    "experiments": {
+      "typedRoutes": true
+    },
+    "extra": {
+      "router": {
+        "origin": false
+      },
+      "eas": {
+        "projectId": "atleyos-mobile-local"
+      }
+    }
+  }
+}
