@@ -1,6 +1,9 @@
 import * as Network from "expo-network";
+import { normalizeClientApiBase } from "./apiBases";
 import type { HomeApp, PairPayload, Session } from "./types";
 import { loadSession, saveSession, updateSession } from "./session";
+
+export { normalizeClientApiBase } from "./apiBases";
 
 export class ApiError extends Error {
   status: number;
@@ -10,6 +13,18 @@ export class ApiError extends Error {
     this.status = status;
     this.body = body;
   }
+}
+
+function sessionBases(session: Session): {
+  https: string;
+  overlay: string;
+  lan: string;
+} {
+  return {
+    https: normalizeClientApiBase(session.httpsApiBase),
+    overlay: normalizeClientApiBase(session.overlayApiBase),
+    lan: normalizeClientApiBase(session.lanApiBase),
+  };
 }
 
 /**
@@ -22,9 +37,7 @@ function bases(
   session: Session,
   opts: { homeVpnUp?: boolean; onWifi?: boolean } = {},
 ): string[] {
-  const https = session.httpsApiBase || "";
-  const overlay = session.overlayApiBase || "";
-  const lan = session.lanApiBase || "";
+  const { https, overlay, lan } = sessionBases(session);
   const homeVpnUp = Boolean(opts.homeVpnUp);
   const onWifi = opts.onWifi !== false;
   let list: string[];
@@ -75,12 +88,12 @@ async function orderedBases(session: Session): Promise<string[]> {
   const vpnUp = await homeVpnTunnelUp();
   const wifi = await onHomeWifi();
   const all = bases(session, { homeVpnUp: vpnUp, onWifi: wifi });
+  const { lan, overlay } = sessionBases(session);
   // Away from Wi‑Fi: never prefer a cached LAN hop — it will hang Chat.
   if (!wifi) {
     if (
       preferredBase?.base &&
-      (preferredBase.base === session.lanApiBase ||
-        preferredBase.base === session.overlayApiBase)
+      (preferredBase.base === lan || preferredBase.base === overlay)
     ) {
       preferredBase = null;
     }
@@ -135,6 +148,7 @@ async function pickReachableBase(
   const ordered = await orderedBases(session);
   if (ordered.length <= 1) return ordered;
   const wifi = await onHomeWifi();
+  const { lan, overlay } = sessionBases(session);
   // Probe in parallel; keep preference order from orderedBases.
   // Only bases that authenticate (2xx) count — a 401 from a stale LAN/VPN hop
   // is "reachable" TCP-wise but must not win Chat (that was the Away Auth-failed bug).
@@ -145,10 +159,7 @@ async function pickReachableBase(
           token,
           // LAN/overlay often black-hole on cellular — fail fast off Wi‑Fi.
           timeoutMs:
-            !wifi &&
-            (base === session.lanApiBase || base === session.overlayApiBase)
-              ? 1200
-              : 2500,
+            !wifi && (base === lan || base === overlay) ? 1200 : 2500,
         });
         return res.ok ? base : null;
       } catch {
@@ -195,8 +206,9 @@ export async function apiFetch<T = unknown>(
     : ["http://127.0.0.1:8765"];
   if (session && tryBases.length === 0) {
     const wifi = await onHomeWifi();
+    const https = sessionBases(session).https;
     throw new Error(
-      !wifi && !session.httpsApiBase
+      !wifi && !https
         ? "Away HTTPS is not on this phone yet. On home Wi‑Fi: finish Away access on the dashboard, open Chat once (or re-pair), then try again."
         : !wifi
           ? "Away HTTPS unreachable. Confirm cloudflared is running at home and the Away URL is correct."
@@ -232,9 +244,8 @@ export async function apiFetch<T = unknown>(
         }
         if (res.status === 401) {
           msg =
-            "Auth failed on this network path. Turn Home VPN off, stay on home Wi‑Fi or " +
-            "Away HTTPS, open Chat once to sync, then retry. Re-pair from the dashboard " +
-            "QR only if it still fails after that.";
+            "Auth failed — stale pair from an older home setup. On home Wi‑Fi: " +
+            "Settings → Remote Access → Show pair QR, then re-pair this phone and try Chat again.";
         }
         throw new ApiError(msg, res.status, body);
       }
@@ -252,7 +263,7 @@ export async function redeemPairing(
   payload: PairPayload,
   opts: { deviceLabel: string; platform: string },
 ): Promise<Session> {
-  const base = payload.lan_api_base;
+  const base = normalizeClientApiBase(payload.lan_api_base);
   if (!base) {
     throw new Error("Pair QR missing lan_api_base — regenerate QR on the home dashboard");
   }
@@ -287,10 +298,15 @@ export async function redeemPairing(
     deviceId: String(body.device_id),
     apiToken: String(body.api_token),
     refreshToken: String(body.refresh_token),
-    lanApiBase: String(body.lan_api_base || payload.lan_api_base),
-    overlayApiBase: String(body.overlay_api_base || payload.overlay_api_base || ""),
-    httpsApiBase: String(
-      body.https_api_base || payload.https_api_base || "",
+    lanApiBase:
+      normalizeClientApiBase(
+        String(body.lan_api_base || payload.lan_api_base),
+      ) || base,
+    overlayApiBase: normalizeClientApiBase(
+      String(body.overlay_api_base || payload.overlay_api_base || ""),
+    ),
+    httpsApiBase: normalizeClientApiBase(
+      String(body.https_api_base || payload.https_api_base || ""),
     ),
     hostPublicKey: body.host_public_key ? String(body.host_public_key) : payload.host_public_key,
     pin: body.pin ? String(body.pin) : payload.pin,
@@ -304,6 +320,7 @@ export async function redeemPairing(
     productModel: String(body.product_model || payload.product_model || "https_first_vpn_optional"),
   };
   await saveSession(session);
+  clearPreferredBase();
   return session;
 }
 
@@ -346,22 +363,36 @@ export async function clientStatus() {
     device: Record<string, unknown>;
     remote_access: Record<string, unknown>;
     https_api_base?: string;
+    lan_api_base?: string;
     profile_continuity?: boolean;
     product_model?: string;
   }>("/api/client/status");
-  // Pick up Away URL if Owner enabled it after the last pair (no re-pair required
-  // when the phone can still reach home on LAN/HTTPS).
+  // Sync Away + LAN bases from home (fixes :8080 / stale tunnel leftovers).
   const session = await loadSession();
   if (session) {
-    const https = String(
-      body.https_api_base ||
-        (body.remote_access as { https_api_base?: string } | undefined)
-          ?.https_api_base ||
-        "",
-    ).trim();
+    const ra = body.remote_access as
+      | { https_api_base?: string; lan_api_base?: string }
+      | undefined;
+    const https = normalizeClientApiBase(
+      body.https_api_base || ra?.https_api_base || "",
+    );
+    const lan = normalizeClientApiBase(
+      body.lan_api_base || ra?.lan_api_base || "",
+    );
     const patch: Partial<Session> = {};
-    if (https.startsWith("https://") && https !== session.httpsApiBase) {
+    if (https && https !== normalizeClientApiBase(session.httpsApiBase)) {
       patch.httpsApiBase = https;
+    }
+    if (lan && lan !== normalizeClientApiBase(session.lanApiBase)) {
+      patch.lanApiBase = lan;
+    }
+    // Drop durable-invalid cached Away URL even when status omits https.
+    if (
+      !https &&
+      session.httpsApiBase &&
+      !normalizeClientApiBase(session.httpsApiBase)
+    ) {
+      patch.httpsApiBase = "";
     }
     if (
       typeof body.profile_continuity === "boolean" &&
@@ -371,6 +402,7 @@ export async function clientStatus() {
     }
     if (Object.keys(patch).length) {
       await updateSession(patch);
+      clearPreferredBase();
     }
   }
   return body;
@@ -385,6 +417,7 @@ export async function probeReachability(session?: Session | null): Promise<{
 }> {
   const s = session === undefined ? await loadSession() : session;
   if (!s) return { ok: false, error: "not_paired" };
+  const { https, lan } = sessionBases(s);
   for (const base of await pickReachableBase(s, s.apiToken)) {
     try {
       const res = await clientFetch(base, "/api/client/status", {
@@ -393,18 +426,14 @@ export async function probeReachability(session?: Session | null): Promise<{
       });
       if (!res.ok) continue;
       const mode: "https" | "lan" | "overlay" =
-        base === s.httpsApiBase
-          ? "https"
-          : base === s.lanApiBase
-            ? "lan"
-            : "overlay";
+        base === https ? "https" : base === lan ? "lan" : "overlay";
       return { ok: true, base, mode };
     } catch {
       /* try next */
     }
   }
   const wifi = await onHomeWifi();
-  if (!wifi && !s.httpsApiBase) {
+  if (!wifi && !https) {
     return {
       ok: false,
       error:

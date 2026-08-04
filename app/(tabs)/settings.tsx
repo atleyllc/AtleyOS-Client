@@ -132,6 +132,39 @@ export default function SettingsScreen() {
         <Text style={styles.secondaryText}>About Share → AtleyOS</Text>
       </Pressable>
 
+      <Text style={styles.h}>Pairing</Text>
+      <Text style={styles.p}>
+        If Chat says Auth failed while status looks Connected, the phone still has
+        a stale pair. On home Wi‑Fi, scan a fresh Remote Access QR.
+      </Text>
+      <Pressable
+        style={styles.btn}
+        onPress={() =>
+          Alert.alert(
+            "Re-pair on home Wi‑Fi?",
+            "Clears this phone’s session. Scan a fresh dashboard QR (Settings → Remote Access → Show pair QR).",
+            [
+              { text: "Cancel", style: "cancel" },
+              {
+                text: "Re-pair",
+                onPress: () =>
+                  void (async () => {
+                    try {
+                      await stopTunnel();
+                    } catch {
+                      /* local clear still */
+                    }
+                    await clearSession();
+                    router.replace("/pair");
+                  })(),
+              },
+            ],
+          )
+        }
+      >
+        <Text style={styles.btnText}>Re-pair on home Wi‑Fi</Text>
+      </Pressable>
+
       <Text style={styles.h}>Privacy</Text>
       <Text style={styles.p}>
         Data collected on this device is sent only to your home AtleyOS over the

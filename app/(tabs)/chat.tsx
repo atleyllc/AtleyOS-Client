@@ -10,7 +10,9 @@ import {
   View,
 } from "react-native";
 import * as Network from "expo-network";
+import { router } from "expo-router";
 import {
+  ApiError,
   chatCompletions,
   clearPreferredBase,
   clientStatus,
@@ -27,6 +29,7 @@ export default function ChatScreen() {
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [statusLine, setStatusLine] = useState("Checking home…");
+  const [needsRepair, setNeedsRepair] = useState(false);
 
   const refreshStatus = useCallback(async () => {
     try {
@@ -43,6 +46,7 @@ export default function ChatScreen() {
               ? "home Wi‑Fi"
               : "Home VPN";
         setStatusLine(`Connected via ${via}${underlay}`);
+        setNeedsRepair(false);
         return;
       }
       setStatusLine(probe.error || "Unreachable — check Away access or home Wi‑Fi");
@@ -75,14 +79,25 @@ export default function ChatScreen() {
       clearPreferredBase();
       // HTTPS-first: never require or force Home VPN for Chat.
       const { content } = await chatCompletions(next);
+      setNeedsRepair(false);
       setMessages([...next, { role: "assistant", content }]);
       await refreshStatus();
     } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      const authFail =
+        (e instanceof ApiError && e.status === 401) ||
+        /auth failed|unauthorized|stale pair/i.test(msg);
+      if (authFail) {
+        setNeedsRepair(true);
+        setStatusLine("Connected path rejected auth — re-pair on home Wi‑Fi");
+      }
       setMessages([
         ...next,
         {
           role: "assistant",
-          content: `Could not reach home: ${e instanceof Error ? e.message : String(e)}`,
+          content: authFail
+            ? `${msg}\n\nTap Re-pair below (home Wi‑Fi), scan a fresh dashboard QR, then send again.`
+            : `Could not reach home: ${msg}`,
         },
       ]);
     } finally {
@@ -93,6 +108,16 @@ export default function ChatScreen() {
   return (
     <View style={styles.root}>
       <Text style={styles.status}>{statusLine}</Text>
+      {needsRepair ? (
+        <Pressable
+          style={styles.repairBanner}
+          onPress={() => router.push("/pair")}
+        >
+          <Text style={styles.repairText}>
+            Re-pair on home Wi‑Fi — scan a fresh Remote Access QR
+          </Text>
+        </Pressable>
+      ) : null}
       <FlatList
         style={styles.list}
         data={messages}
@@ -154,6 +179,22 @@ const styles = StyleSheet.create({
     fontSize: 12,
     paddingHorizontal: space.md,
     paddingTop: space.sm,
+  },
+  repairBanner: {
+    marginHorizontal: space.md,
+    marginTop: space.sm,
+    paddingVertical: 10,
+    paddingHorizontal: space.md,
+    borderRadius: 10,
+    backgroundColor: colors.accentDim,
+    borderWidth: 1,
+    borderColor: colors.accent,
+  },
+  repairText: {
+    color: colors.text,
+    fontWeight: "700",
+    fontSize: 13,
+    textAlign: "center",
   },
   list: { flex: 1 },
   empty: { color: colors.muted, lineHeight: 22 },
