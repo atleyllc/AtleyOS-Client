@@ -229,8 +229,9 @@ export async function apiFetch<T = unknown>(
         }
         if (res.status === 401) {
           msg =
-            "Not authorized — this phone’s pairing expired or no longer matches home. " +
-            "On home Wi‑Fi: open the dashboard Pairing QR and re-pair, then try Chat again.";
+            "Auth failed — the home server may be on the wrong data root, or this phone " +
+            "is not recognized. Join home Wi‑Fi and retry Chat; re-pair from the " +
+            "dashboard QR only if it still fails.";
         }
         throw new ApiError(msg, res.status, body);
       }
