@@ -1,6 +1,6 @@
 {
   "name": "atleyos-client",
-  "version": "1.0.7",
+  "version": "1.0.8",
   "main": "expo-router/entry",
   "dependencies": {
     "@expo/ngrok": "^4.1.3",
