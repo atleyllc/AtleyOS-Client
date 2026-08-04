@@ -136,6 +136,8 @@ async function pickReachableBase(
   if (ordered.length <= 1) return ordered;
   const wifi = await onHomeWifi();
   // Probe in parallel; keep preference order from orderedBases.
+  // Only bases that authenticate (2xx) count — a 401 from a stale LAN/VPN hop
+  // is "reachable" TCP-wise but must not win Chat (that was the Away Auth-failed bug).
   const settled = await Promise.all(
     ordered.map(async (base) => {
       try {
@@ -148,7 +150,7 @@ async function pickReachableBase(
               ? 1200
               : 2500,
         });
-        return res.status > 0 ? base : null;
+        return res.ok ? base : null;
       } catch {
         return null;
       }
@@ -160,8 +162,9 @@ async function pickReachableBase(
     // Chat must not fall through to 180s timeouts on dead hops.
     return winners;
   }
-  // No probe winner: fail fast (especially off Wi‑Fi) instead of hanging Chat.
+  // No authed probe winner: fail fast (especially off Wi‑Fi) instead of hanging Chat.
   if (!wifi) return [];
+  // On Wi‑Fi, try the first ordered base once (usually HTTPS, then LAN).
   return ordered.slice(0, 1);
 }
 
@@ -229,9 +232,9 @@ export async function apiFetch<T = unknown>(
         }
         if (res.status === 401) {
           msg =
-            "Auth failed — the home server may be on the wrong data root, or this phone " +
-            "is not recognized. Join home Wi‑Fi and retry Chat; re-pair from the " +
-            "dashboard QR only if it still fails.";
+            "Auth failed on this network path. Turn Home VPN off, stay on home Wi‑Fi or " +
+            "Away HTTPS, open Chat once to sync, then retry. Re-pair from the dashboard " +
+            "QR only if it still fails after that.";
         }
         throw new ApiError(msg, res.status, body);
       }
@@ -304,25 +307,36 @@ export async function redeemPairing(
   return session;
 }
 
+/** One refresh at a time — parallel 401s must not rotate the refresh token twice. */
+let refreshInFlight: Promise<Session | null> | null = null;
+
 async function refreshSession(session: Session): Promise<Session | null> {
-  for (const base of await orderedBases(session)) {
-    try {
-      const res = await clientFetch(base, "/api/client/session/refresh", {
-        method: "POST",
-        body: JSON.stringify({ refresh_token: session.refreshToken }),
-      });
-      const body = (await res.json()) as Record<string, unknown>;
-      if (!res.ok || !body.ok) continue;
-      const next = await updateSession({
-        apiToken: String(body.api_token),
-        refreshToken: String(body.refresh_token),
-      });
-      return next;
-    } catch {
-      /* try next base */
+  if (refreshInFlight) return refreshInFlight;
+  refreshInFlight = (async () => {
+    // Prefer bases that already accept this device; never refresh via a 401 hop.
+    const candidates = await pickReachableBase(session, session.apiToken);
+    const bases = candidates.length ? candidates : await orderedBases(session);
+    for (const base of bases) {
+      try {
+        const res = await clientFetch(base, "/api/client/session/refresh", {
+          method: "POST",
+          body: JSON.stringify({ refresh_token: session.refreshToken }),
+        });
+        const body = (await res.json()) as Record<string, unknown>;
+        if (!res.ok || !body.ok) continue;
+        return await updateSession({
+          apiToken: String(body.api_token),
+          refreshToken: String(body.refresh_token),
+        });
+      } catch {
+        /* try next base */
+      }
     }
-  }
-  return null;
+    return null;
+  })().finally(() => {
+    refreshInFlight = null;
+  });
+  return refreshInFlight;
 }
 
 export async function clientStatus() {
