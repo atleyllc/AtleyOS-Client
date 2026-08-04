@@ -1,0 +1,80 @@
+diff --git a/node_modules/react-native-wireguard-vpn-patched/android/build.gradle b/node_modules/react-native-wireguard-vpn-patched/android/build.gradle
+index 0d3977d..0f51adb 100644
+--- a/node_modules/react-native-wireguard-vpn-patched/android/build.gradle
++++ b/node_modules/react-native-wireguard-vpn-patched/android/build.gradle
+@@ -1,39 +1,13 @@
+-buildscript {
+-    ext.kotlin_version = '1.8.0'
+-    repositories {
+-        google()
+-        mavenCentral()
+-    }
+-    dependencies {
+-        classpath 'com.android.tools.build:gradle:8.1.0'
+-        classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
+-    }
+-}
+-
+-allprojects {
+-    repositories {
+-        google()
+-        mavenCentral()
+-    }
+-}
+-
+ apply plugin: 'com.android.library'
+ apply plugin: 'kotlin-android'
+ 
+ android {
+-    compileSdkVersion 34
++    compileSdkVersion rootProject.hasProperty('compileSdkVersion') ? rootProject.ext.compileSdkVersion : 35
+     namespace "com.wireguardvpn"
+ 
+     defaultConfig {
+-        minSdkVersion 21
+-        targetSdkVersion 34
+-    }
+-
+-    buildTypes {
+-        release {
+-            minifyEnabled false
+-            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+-        }
++        minSdkVersion rootProject.hasProperty('minSdkVersion') ? rootProject.ext.minSdkVersion : 24
++        targetSdkVersion rootProject.hasProperty('targetSdkVersion') ? rootProject.ext.targetSdkVersion : 35
+     }
+ 
+     compileOptions {
+@@ -47,14 +21,13 @@ android {
+ 
+     sourceSets {
+         main {
+-            manifest.srcFile 'src/main/AndroidManifest.xml'
+-            res.srcDirs = ['src/main/res']
++            java.srcDirs = ['src/main/java']
+         }
+     }
+ }
+ 
+ dependencies {
+-    implementation "com.facebook.react:react-native:+"
+-    implementation "org.jetbrains.kotlin:kotlin-stdlib:$kotlin_version"
+-    implementation 'com.wireguard.android:tunnel:1.0.20211029'
++    implementation "com.facebook.react:react-android"
++    implementation "org.jetbrains.kotlin:kotlin-stdlib"
++    implementation 'com.wireguard.android:tunnel:1.0.20230706'
+ }
+diff --git a/node_modules/react-native-wireguard-vpn-patched/android/src/main/java/com/wireguardvpn/WireGuardVpnModule.kt b/node_modules/react-native-wireguard-vpn-patched/android/src/main/java/com/wireguardvpn/WireGuardVpnModule.kt
+index 5fc0a20..f934469 100644
+--- a/node_modules/react-native-wireguard-vpn-patched/android/src/main/java/com/wireguardvpn/WireGuardVpnModule.kt
++++ b/node_modules/react-native-wireguard-vpn-patched/android/src/main/java/com/wireguardvpn/WireGuardVpnModule.kt
+@@ -224,6 +224,9 @@ class WireGuardVpnModule(reactContext: ReactApplicationContext) : ReactContextBa
+                 throw Exception("Invalid peer allowedIP format: ${e.message}. Use ::/0 for IPv6 default, not ::0/0. IPs: $normalizedAllowedIPs")
+             }
+ 
++            // Keep NAT mappings alive so away access works without user toggles.
++            peerBuilder.setPersistentKeepalive(25)
++
+             println("Building WireGuard config...")
+             val configBuilder = Config.Builder()
+             configBuilder.setInterface(interfaceBuilder.build())

@@ -2,7 +2,7 @@
   "expo": {
     "name": "AtleyOS Client",
     "slug": "AtleyOSClient",
-    "version": "1.0.0",
+    "version": "1.0.7",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "scheme": "atleyos",
@@ -26,11 +26,15 @@
         "NSPhotoLibraryUsageDescription": "AtleyOS learns photo metadata (and media if granted) into your home Profile.",
         "NSMicrophoneUsageDescription": "Send voice notes to your AtleyOS home server for transcription and Chat.",
         "NSFaceIDUsageDescription": "Unlock AtleyOS Client before Chat and Actions.",
-        "UIBackgroundModes": ["fetch", "processing"]
+        "UIBackgroundModes": [
+          "fetch",
+          "processing"
+        ]
       }
     },
     "android": {
       "package": "com.atleyos.client",
+      "versionCode": 8,
       "adaptiveIcon": {
         "backgroundColor": "#0f1419",
         "foregroundImage": "./assets/android-icon-foreground.png",
@@ -52,12 +56,18 @@
         "INTERNET",
         "ACCESS_NETWORK_STATE",
         "FOREGROUND_SERVICE",
+        "FOREGROUND_SERVICE_SPECIAL_USE",
+        "RECEIVE_BOOT_COMPLETED",
+        "BIND_VPN_SERVICE",
         "POST_NOTIFICATIONS"
       ]
     },
     "plugins": [
       "expo-router",
+      "expo-dev-client",
       "expo-secure-store",
+      "react-native-wireguard-vpn-patched",
+      "./plugins/withAtleyosWireGuard.js",
       [
         "expo-camera",
         {
@@ -88,7 +98,11 @@
         {
           "photosPermission": "AtleyOS learns photo metadata into your home Profile.",
           "savePhotosPermission": "AtleyOS does not save to your library by default.",
-          "isAccessMediaLocationEnabled": true
+          "isAccessMediaLocationEnabled": true,
+          "granularPermissions": [
+            "photo",
+            "video"
+          ]
         }
       ],
       "expo-local-authentication"
@@ -99,9 +113,6 @@
     "extra": {
       "router": {
         "origin": false
-      },
-      "eas": {
-        "projectId": "atleyos-client-local"
       }
     }
   }

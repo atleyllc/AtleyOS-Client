@@ -10,8 +10,12 @@ export type PairPayload = {
   listen_port?: number;
   lan_api_base: string;
   overlay_api_base?: string;
+  https_api_base?: string;
   relay_url?: string;
   pin?: string;
+  home_vpn_available?: boolean;
+  profile_continuity?: boolean;
+  product_model?: string;
 };
 
 export type Session = {
@@ -20,6 +24,8 @@ export type Session = {
   refreshToken: string;
   lanApiBase: string;
   overlayApiBase: string;
+  /** Away Chat over Cloudflare Tunnel / Owner HTTPS — no system VPN required. */
+  httpsApiBase?: string;
   hostPublicKey?: string;
   pin?: string;
   overlayIp?: string;
@@ -28,6 +34,9 @@ export type Session = {
   deviceLabel: string;
   platform: string;
   learningConsentAt?: number;
+  homeVpnAvailable?: boolean;
+  profileContinuity?: boolean;
+  productModel?: string;
 };
 
 export type HomeApp = {

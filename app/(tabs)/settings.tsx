@@ -14,7 +14,8 @@ import { revokeSelf } from "../../src/lib/api";
 import {
   awayPathSummary,
   ensureTunnel,
-  getTunnelState,
+  pauseTunnel,
+  stopTunnel,
   type TunnelState,
 } from "../../src/lib/wireguard";
 import {
@@ -30,21 +31,28 @@ export default function SettingsScreen() {
   const [sync, setSync] = useState<SyncStatus | null>(null);
   const [label, setLabel] = useState("");
 
-  const refresh = useCallback(async () => {
+  const loadStatus = useCallback(async () => {
     const s = await loadSession();
     setLabel(s?.deviceLabel || "");
-    setTunnel(await ensureTunnel());
+    const { getTunnelState } = await import("../../src/lib/wireguard");
+    setTunnel(await getTunnelState());
+    setSync(await getSyncStatus());
+  }, []);
+
+  const turnOnHomeVpn = useCallback(async () => {
+    setTunnel(await ensureTunnel({ resume: true, forceReconnect: true }));
     setSync(await getSyncStatus());
   }, []);
 
   useFocusEffect(
     useCallback(() => {
-      void refresh();
-    }, [refresh]),
+      void loadStatus();
+    }, [loadStatus]),
   );
 
   async function onRevoke() {
     try {
+      await stopTunnel();
       await revokeSelf();
     } catch {
       /* still clear local */
@@ -71,13 +79,32 @@ export default function SettingsScreen() {
       <Text style={styles.h}>Device</Text>
       <Text style={styles.p}>{label || "Paired client"}</Text>
 
-      <Text style={styles.h}>Tunnel</Text>
+      <Text style={styles.h}>Home connection</Text>
       <Text style={styles.p}>
-        {tunnel?.status} · {tunnel?.mode}
+        Chat uses home Wi‑Fi or Away HTTPS while you are away — Home VPN is optional.
+        {"\n"}
+        Tunnel: {tunnel?.status} · {tunnel?.mode}
         {"\n"}
         {tunnel?.message}
       </Text>
       <Text style={styles.mono}>{awayPathSummary(tunnel?.relayUrl)}</Text>
+      <Pressable style={styles.btn} onPress={() => void turnOnHomeVpn()}>
+        <Text style={styles.btnText}>Turn on Home VPN</Text>
+      </Pressable>
+      <Pressable
+        style={styles.secondary}
+        onPress={() =>
+          void (async () => {
+            setTunnel(await pauseTunnel());
+          })()
+        }
+      >
+        <Text style={styles.secondaryText}>Turn off Home VPN</Text>
+      </Pressable>
+      <Text style={styles.p}>
+        Home VPN is only for “whole phone on home network.” Leave it off for
+        normal Chat. If the phone looks offline, turn Home VPN off here.
+      </Text>
 
       <Text style={styles.h}>Observation sync</Text>
       <Text style={styles.p}>
@@ -93,7 +120,7 @@ export default function SettingsScreen() {
           void (async () => {
             await requestAllLearningPermissions();
             await runObservationCycle();
-            await refresh();
+            await loadStatus();
           })()
         }
       >

@@ -5,7 +5,8 @@ import * as MediaLibrary from "expo-media-library";
 import * as Device from "expo-device";
 import { Platform } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { ingestObservation } from "./api";
+import { ingestObservation, ingestProfileContinuity } from "./api";
+import { loadSession } from "./session";
 import type { SyncStatus } from "./types";
 
 const QUEUE_KEY = "atleyos.client.observation.queue.v1";
@@ -70,7 +71,11 @@ export async function requestAllLearningPermissions(): Promise<
     results.location = false;
   }
   try {
-    const media = await MediaLibrary.requestPermissionsAsync();
+    // Expo Go / Android 13+: only request photo+video (not AUDIO).
+    const media = await MediaLibrary.requestPermissionsAsync(false, [
+      "photo",
+      "video",
+    ]);
     results.photos = media.status === "granted";
   } catch {
     results.photos = false;
@@ -155,12 +160,12 @@ async function collectLocation(): Promise<ObsItem[]> {
 }
 
 async function collectPhotosMetadata(): Promise<ObsItem[]> {
-  const perm = await MediaLibrary.getPermissionsAsync();
+  const perm = await MediaLibrary.getPermissionsAsync(false, ["photo", "video"]);
   if (perm.status !== "granted") return [];
   try {
     const page = await MediaLibrary.getAssetsAsync({
       first: 50,
-      mediaType: ["photo", "video"],
+      mediaType: [MediaLibrary.MediaType.photo, MediaLibrary.MediaType.video],
       sortBy: [["creationTime", false]],
     });
     return (page.assets || []).map((a) => ({
@@ -226,7 +231,18 @@ export async function flushQueue(): Promise<{ accepted: number; error?: string }
   if (!queue.length) return { accepted: 0 };
   try {
     const chunk = queue.slice(0, 100);
-    const out = await ingestObservation(chunk);
+    let out: { accepted?: number };
+    try {
+      out = await ingestObservation(chunk);
+    } catch (primary) {
+      // Profile Continuity Channel when Owner enabled internet Observation.
+      const session = await loadSession();
+      if (session?.profileContinuity || session?.httpsApiBase) {
+        out = await ingestProfileContinuity(chunk, "atleyos_client");
+      } else {
+        throw primary;
+      }
+    }
     const rest = queue.slice(chunk.length);
     await saveQueue(rest);
     const status = await getSyncStatus();

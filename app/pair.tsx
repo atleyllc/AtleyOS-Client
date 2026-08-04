@@ -11,7 +11,7 @@ import {
 import { CameraView, useCameraPermissions } from "expo-camera";
 import { router } from "expo-router";
 import { parsePairPayload, redeemPairing } from "../src/lib/api";
-import { saveWgConf, ensureTunnel } from "../src/lib/wireguard";
+import { saveWgConf, pauseTunnel } from "../src/lib/wireguard";
 import { colors, space } from "../src/lib/theme";
 
 export default function PairScreen() {
@@ -30,10 +30,18 @@ export default function PairScreen() {
         platform: Platform.OS,
       });
       await saveWgConf(session.wgClientConf);
-      await ensureTunnel();
+      // HTTPS-first: Chat uses LAN/Away HTTPS. Home VPN stays off until Owner enables it.
+      await pauseTunnel();
       router.replace("/learn");
     } catch (e) {
-      Alert.alert("Pairing failed", e instanceof Error ? e.message : String(e));
+      const msg = e instanceof Error ? e.message : String(e);
+      const hint =
+        /network|fetch|abort|unreachable|failed to connect/i.test(msg)
+          ? `${msg}\n\nStay on home Wi‑Fi. On the dashboard open Remote Access → Show pair QR (fresh code), then scan again.`
+          : /pairing_expired|no_active_pairing|invalid_/i.test(msg)
+            ? `${msg}\n\nGet a new QR: dashboard → Remote Access → Show pair QR.`
+            : msg;
+      Alert.alert("Pairing failed", hint);
       setScanning(true);
     } finally {
       setBusy(false);
@@ -44,7 +52,8 @@ export default function PairScreen() {
     <View style={styles.root}>
       <Text style={styles.lede}>
         On your home AtleyOS: Settings → Remote Access → Show pair QR. Stay on
-        home Wi‑Fi for the first pair. No router ports required.
+        home Wi‑Fi for the first pair. Chat works over Wi‑Fi and Away HTTPS —
+        optional Home VPN is only if you want the whole phone on your home network.
       </Text>
 
       {!permission?.granted ? (

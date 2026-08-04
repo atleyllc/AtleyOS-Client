@@ -9,12 +9,17 @@ import {
   TextInput,
   View,
 } from "react-native";
-import { chatCompletions, clientStatus } from "../../src/lib/api";
+import * as Network from "expo-network";
+import {
+  chatCompletions,
+  clearPreferredBase,
+  clientStatus,
+  probeReachability,
+} from "../../src/lib/api";
 import { openCitationUrl } from "../../src/lib/homeOpeners";
 import { runObservationCycle } from "../../src/lib/observation";
 import type { ChatMessage } from "../../src/lib/types";
 import { colors, space } from "../../src/lib/theme";
-
 const URL_RE = /https?:\/\/[^\s)]+/g;
 
 export default function ChatScreen() {
@@ -25,18 +30,38 @@ export default function ChatScreen() {
 
   const refreshStatus = useCallback(async () => {
     try {
-      const st = await clientStatus();
-      setStatusLine(
-        st.reachable ? "Connected to home AtleyOS" : "Unreachable",
-      );
+      const net = await Network.getNetworkStateAsync().catch(() => null);
+      // Sync Away HTTPS URL from home when reachable (e.g. on Wi‑Fi after dashboard setup).
+      await clientStatus().catch(() => undefined);
+      const probe = await probeReachability();
+      if (probe.ok) {
+        const underlay = net?.type ? ` · ${net.type}` : "";
+        const via =
+          probe.mode === "https"
+            ? "Away HTTPS"
+            : probe.mode === "lan"
+              ? "home Wi‑Fi"
+              : "Home VPN";
+        setStatusLine(`Connected via ${via}${underlay}`);
+        return;
+      }
+      setStatusLine(probe.error || "Unreachable — check Away access or home Wi‑Fi");
     } catch {
-      setStatusLine("Offline — will retry on home Wi‑Fi / tunnel");
+      setStatusLine(
+        "Reaching home… Chat uses Wi‑Fi or Away HTTPS (Home VPN optional)",
+      );
     }
   }, []);
 
   useEffect(() => {
     void refreshStatus();
     void runObservationCycle().catch(() => undefined);
+    const sub = Network.addNetworkStateListener(() => {
+      clearPreferredBase();
+      // Do not auto-start Home VPN for Chat — only refresh reachability.
+      void refreshStatus();
+    });
+    return () => sub.remove();
   }, [refreshStatus]);
 
   async function send() {
@@ -47,6 +72,8 @@ export default function ChatScreen() {
     setInput("");
     setBusy(true);
     try {
+      clearPreferredBase();
+      // HTTPS-first: never require or force Home VPN for Chat.
       const { content } = await chatCompletions(next);
       setMessages([...next, { role: "assistant", content }]);
       await refreshStatus();

@@ -40,3 +40,8 @@ yarn-error.*
 /ios
 /android
 .origin-bare/
+
+# local APK output (publish via GitHub Releases, don't commit)
+/dist/*.apk
+/android/local.properties
+/android/keystore.properties
