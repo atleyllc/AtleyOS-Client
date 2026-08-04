@@ -227,6 +227,11 @@ export async function apiFetch<T = unknown>(
             "message" in body ? String((body as { message: string }).message) : "";
           msg = detail || err || msg;
         }
+        if (res.status === 401) {
+          msg =
+            "Not authorized — this phone’s pairing expired or no longer matches home. " +
+            "On home Wi‑Fi: open the dashboard Pairing QR and re-pair, then try Chat again.";
+        }
         throw new ApiError(msg, res.status, body);
       }
       rememberBase(base);
