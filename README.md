@@ -33,9 +33,11 @@ For store / WireGuard Network Extension builds, use EAS (`eas.json`) with a cust
 
 1. Home: Settings → Remote Access → Enable → Show pair QR  
 2. Client: open AtleyOS Client → scan QR (home Wi‑Fi)  
-3. Allow learning permissions  
-4. Chat + Observation sync  
-5. Leave Wi‑Fi — tunnel uses hole punch / Owner relay
+3. Phone setup: confirm Away (`https://atleyos.atley.llc` answers only when the tunnel is up), then copy the Photos (Immich) and Files (Nextcloud) URLs into those phone apps  
+4. Learning is optional  
+5. Chat. Home VPN stays off unless you want the whole phone on the home network  
+
+Gap list: [`docs/PARITY-2026-10-09.md`](docs/PARITY-2026-10-09.md)
 
 ## Chat models
 

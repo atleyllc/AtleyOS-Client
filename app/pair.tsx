@@ -32,7 +32,7 @@ export default function PairScreen() {
       await saveWgConf(session.wgClientConf);
       // HTTPS-first: Chat uses LAN/Away HTTPS. Home VPN stays off until Owner enables it.
       await pauseTunnel();
-      router.replace("/learn");
+      router.replace("/setup");
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       const hint =

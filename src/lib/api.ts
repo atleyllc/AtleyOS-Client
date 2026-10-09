@@ -223,7 +223,7 @@ async function clientFetch(
 
 export async function apiFetch<T = unknown>(
   path: string,
-  init: RequestInit & { token?: string; session?: Session | null } = {},
+  init: RequestInit & { token?: string; session?: Session | null; refreshed?: boolean } = {},
 ): Promise<T> {
   const session = init.session === undefined ? await loadSession() : init.session;
   const token = init.token ?? session?.apiToken;
@@ -258,10 +258,15 @@ export async function apiFetch<T = unknown>(
       } catch {
         body = text;
       }
-      if (res.status === 401 && session?.refreshToken) {
+      if (res.status === 401 && session?.refreshToken && !init.refreshed) {
         const refreshed = await refreshSession(session);
         if (refreshed) {
-          return apiFetch(path, { ...init, session: refreshed, token: refreshed.apiToken });
+          return apiFetch(path, {
+            ...init,
+            session: refreshed,
+            token: refreshed.apiToken,
+            refreshed: true,
+          });
         }
       }
       if (!res.ok) {

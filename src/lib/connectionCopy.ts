@@ -43,6 +43,27 @@ function checkFor(mode: BaseMode): string {
   }
 }
 
+/** Saved LAN and Away addresses, including when Away is present but the tunnel is down. */
+export function describeSavedPaths(input: {
+  lan: string;
+  https: string;
+  overlay?: string;
+  httpsReady?: boolean;
+}): string {
+  const lines = [
+    input.lan ? `LAN ${input.lan}` : "LAN — no address saved on this phone",
+  ];
+  if (!input.https) {
+    lines.push("Away — not set up");
+  } else if (input.httpsReady === false) {
+    lines.push(`Away ${input.https} — tunnel not up`);
+  } else {
+    lines.push(`Away ${input.https}`);
+  }
+  if (input.overlay) lines.push(`Home VPN ${input.overlay}`);
+  return lines.join("\n");
+}
+
 export type UnreachableExplanation = {
   message: string;
   /** Saved address is loopback or missing — Owner should open the pair screen. */

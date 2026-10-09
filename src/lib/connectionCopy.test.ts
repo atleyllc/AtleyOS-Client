@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { UNPAIRED_MESSAGE, explainUnreachable } from "./connectionCopy";
+import { UNPAIRED_MESSAGE, describeSavedPaths, explainUnreachable } from "./connectionCopy";
 
 const LAN = "http://192.168.8.140:8765";
 const AWAY = "https://atleyos.atley.llc";
@@ -58,6 +58,18 @@ describe("connection copy", () => {
     assert.match(message, new RegExp(AWAY.replace(/[.]/g, "\\.")));
     assert.match(message, /tunnel is not up/);
     assert.equal(suggestPair, false);
+  });
+
+  it("names the saved LAN and Away addresses", () => {
+    const text = describeSavedPaths({
+      lan: LAN,
+      https: AWAY,
+      httpsReady: false,
+      overlay: "http://10.55.0.1:8765",
+    });
+    assert.match(text, new RegExp(`LAN ${LAN.replace(/[.]/g, "\\.")}`));
+    assert.match(text, /tunnel not up/);
+    assert.match(text, /Home VPN/);
   });
 
   it("asks for Away setup when the phone is off Wi-Fi and has no Away URL", () => {

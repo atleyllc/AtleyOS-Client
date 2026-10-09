@@ -1,31 +1,43 @@
 import { useCallback, useState } from "react";
-import {
-  Alert,
-  Pressable,
-  RefreshControl,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from "react-native";
+import { Alert, Linking, Platform, ScrollView, StyleSheet, Text } from "react-native";
+import * as Clipboard from "expo-clipboard";
+import * as Network from "expo-network";
 import { useFocusEffect } from "expo-router";
-import { loadHomeApps, openHomeApp } from "../../src/lib/homeOpeners";
-import { defaultHaFavorites } from "../../src/lib/approvals";
-import { chatCompletions } from "../../src/lib/api";
-import type { HomeApp } from "../../src/lib/types";
+import { loadHomeApps } from "../../src/lib/homeOpeners";
+import {
+  homeStatusLine,
+  presentHomeLinks,
+  type HomeLink,
+} from "../../src/lib/homeApps";
+import { loadSession } from "../../src/lib/session";
+import { getTunnelState } from "../../src/lib/wireguard";
+import { Disclosure, PrimaryButton, QuietButton, ScreenIntro, Section } from "../../src/components/ui";
 import { colors, space } from "../../src/lib/theme";
 
 export default function HomeRailScreen() {
-  const [apps, setApps] = useState<HomeApp[]>([]);
-  const [refreshing, setRefreshing] = useState(false);
-  const [haBusy, setHaBusy] = useState<string | null>(null);
+  const [links, setLinks] = useState<HomeLink[]>([]);
+  const [note, setNote] = useState("");
 
   const load = useCallback(async () => {
+    const session = await loadSession();
+    let apps: Awaited<ReturnType<typeof loadHomeApps>> = [];
+    let warning = "";
     try {
-      setApps(await loadHomeApps());
+      if (session) apps = await loadHomeApps();
     } catch (e) {
-      Alert.alert("Home apps", e instanceof Error ? e.message : String(e));
+      warning = e instanceof Error ? e.message : String(e);
     }
+    const net = await Network.getNetworkStateAsync().catch(() => null);
+    const tunnel = await getTunnelState().catch(() => null);
+    const next = presentHomeLinks({
+      apps,
+      lanApiBase: session?.lanApiBase,
+      httpsApiBase: session?.httpsApiBase,
+      onWifi: net?.type === Network.NetworkStateType.WIFI,
+      homeVpnUp: tunnel?.status === "up" && tunnel.mode === "overlay",
+    });
+    setLinks(next);
+    setNote(warning);
   }, []);
 
   useFocusEffect(
@@ -34,101 +46,93 @@ export default function HomeRailScreen() {
     }, [load]),
   );
 
-  async function onOpen(app: HomeApp) {
+  async function openLink(link: HomeLink) {
+    if (!link.openUrl) {
+      Alert.alert(link.title, link.openNote);
+      return;
+    }
     try {
-      const how = await openHomeApp(app);
-      if (how === "store") {
-        Alert.alert("Install app", `Opened store for ${app.title}.`);
-      }
+      await Linking.openURL(link.openUrl);
     } catch (e) {
-      Alert.alert("Open failed", e instanceof Error ? e.message : String(e));
+      Alert.alert(link.title, e instanceof Error ? e.message : String(e));
     }
   }
 
-  async function runFavorite(label: string, entityId: string) {
-    setHaBusy(entityId);
-    try {
-      const { content } = await chatCompletions([
-        {
-          role: "user",
-          content: `Please turn on or toggle ${label} (${entityId}) if I have granted control.`,
-        },
-      ]);
-      Alert.alert(label, content.slice(0, 400));
-    } catch (e) {
-      Alert.alert(label, e instanceof Error ? e.message : String(e));
-    } finally {
-      setHaBusy(null);
-    }
-  }
+  const primary = links.filter((link) => link.kind !== "other");
+  const extra = links.filter((link) => link.kind === "other");
 
   return (
-    <ScrollView
-      style={styles.root}
-      contentContainerStyle={{ padding: space.md, gap: space.md }}
-      refreshControl={
-        <RefreshControl
-          refreshing={refreshing}
-          tintColor={colors.accent}
-          onRefresh={() => {
-            setRefreshing(true);
-            void load().finally(() => setRefreshing(false));
-          }}
-        />
-      }
-    >
-      <Text style={styles.lede}>
-        Unified launcher — opens Immich, Nextcloud, Jellyfin, or Home Assistant
-        (native app if installed, else over your AtleyOS tunnel). Uploads stay
-        in those apps; learning stays in AtleyOS.
-      </Text>
-
-      {apps.map((app) => (
-        <Pressable key={app.id} style={styles.card} onPress={() => void onOpen(app)}>
-          <Text style={styles.cardTitle}>{app.title}</Text>
-          <Text style={styles.cardMeta}>{app.app}</Text>
-          <Text style={styles.cardUrl}>{app.overlay_url}</Text>
-        </Pressable>
-      ))}
-
-      <Text style={styles.section}>Quick Home controls</Text>
-      <Text style={styles.hint}>Granted HA favorites via Chat → Actions</Text>
-      {defaultHaFavorites().map((f) => (
-        <Pressable
-          key={f.entityId}
-          style={styles.fav}
-          disabled={haBusy === f.entityId}
-          onPress={() => void runFavorite(f.label, f.entityId)}
-        >
-          <Text style={styles.favText}>
-            {haBusy === f.entityId ? "…" : f.label}
+    <ScrollView style={styles.root} contentContainerStyle={styles.content}>
+      <ScreenIntro
+        title="Home"
+        subtitle="Photos, Files, Media, and Home open at the LAN address on home Wi‑Fi, or the Away address when you are away."
+      />
+      {note ? <Text style={styles.warn}>{note}</Text> : null}
+      {primary.map((link) => (
+        <Section key={link.kind} eyebrow="Everyday" title={link.title}>
+          <Text style={styles.body}>
+            {link.openNote}
+            {"\n"}
+            {homeStatusLine(link)}
           </Text>
-        </Pressable>
+          <PrimaryButton
+            label={link.openUrl ? `Open ${link.title}` : "No address yet"}
+            onPress={() => void openLink(link)}
+            disabled={!link.openUrl}
+          />
+          <Disclosure title="Addresses">
+            <Text style={styles.mono}>
+              {link.lanUrl ? `LAN ${link.lanUrl}` : "LAN — none"}
+              {"\n"}
+              {link.awayUrl ? `Away ${link.awayUrl}` : "Away — home didn’t send one"}
+              {"\n"}
+              {link.overlayUrl ? `Home VPN ${link.overlayUrl}` : "Home VPN — none"}
+            </Text>
+            {link.openUrl ? (
+              <QuietButton
+                label="Copy the address to open"
+                onPress={() => void Clipboard.setStringAsync(link.openUrl)}
+              />
+            ) : null}
+            <StoreLink link={link} />
+          </Disclosure>
+        </Section>
       ))}
+      {extra.length ? (
+        <Section eyebrow="Advanced" title="Other apps">
+          {extra.map((link) => (
+            <Disclosure key={`${link.app}-${link.title}`} title={link.title}>
+              <Text style={styles.body}>{link.openNote}</Text>
+              <PrimaryButton
+                label={link.openUrl ? "Open" : "No address yet"}
+                onPress={() => void openLink(link)}
+                disabled={!link.openUrl}
+              />
+            </Disclosure>
+          ))}
+        </Section>
+      ) : null}
     </ScrollView>
   );
 }
 
+function StoreLink({ link }: { link: HomeLink }) {
+  const store = Platform.OS === "ios" ? link.store?.ios : link.store?.android;
+  if (!store) return null;
+  return <QuietButton label="Install the phone app" onPress={() => void Linking.openURL(store)} />;
+}
+
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.bg },
-  lede: { color: colors.muted, lineHeight: 20 },
-  card: {
+  content: { padding: space.md, gap: space.md, paddingBottom: space.xl },
+  body: { color: colors.muted, lineHeight: 21 },
+  warn: { color: colors.danger, lineHeight: 20 },
+  mono: {
+    color: colors.text,
+    fontSize: 12,
+    lineHeight: 18,
     backgroundColor: colors.surface,
-    borderRadius: 14,
-    padding: space.md,
-    borderWidth: 1,
-    borderColor: colors.border,
-    gap: 4,
+    padding: space.sm,
+    borderRadius: 8,
   },
-  cardTitle: { color: colors.text, fontSize: 18, fontWeight: "700" },
-  cardMeta: { color: colors.accent },
-  cardUrl: { color: colors.muted, fontSize: 12 },
-  section: { color: colors.text, fontWeight: "700", marginTop: space.sm },
-  hint: { color: colors.muted, fontSize: 12 },
-  fav: {
-    backgroundColor: colors.accentDim,
-    padding: space.md,
-    borderRadius: 12,
-  },
-  favText: { color: colors.text, fontWeight: "600" },
 });
