@@ -42,6 +42,10 @@ export default function Gate() {
     );
   }
 
+  if (!session.setupSeenAt && !session.learningConsentAt) {
+    return <Redirect href="/setup" />;
+  }
+
   if (!session.learningConsentAt) {
     return <Redirect href="/learn" />;
   }

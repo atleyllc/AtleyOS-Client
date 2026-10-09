@@ -11,6 +11,7 @@ Run once on **iOS** and once on **Android**.
 | 2 | Pair QR / payload visible | | |
 | 3 | Install AtleyOS Client build | | |
 | 4 | Scan QR on home Wi‑Fi; pairing succeeds | | |
+| 4b | Phone setup: Check Away names `https://atleyos.atley.llc`; Photos and Files copy the LAN URLs (Immich `:2283`, Nextcloud `:10081`) | | |
 | 5 | Chat on LAN **with Home VPN Off** | | |
 | 6 | Learning consent → OS permission prompts | | |
 | 7 | Chat: send message; reply from home | | |

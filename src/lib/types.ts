@@ -39,6 +39,8 @@ export type Session = {
   deviceLabel: string;
   platform: string;
   learningConsentAt?: number;
+  /** Set when the phone setup guide has been finished or skipped. */
+  setupSeenAt?: number;
   homeVpnAvailable?: boolean;
   profileContinuity?: boolean;
   productModel?: string;
@@ -52,6 +54,13 @@ export type HomeApp = {
   store?: { ios?: string; android?: string };
   overlay_url: string;
   lan_url: string;
+  /** Public HTTPS URL when the home server publishes one for this app. */
+  https_url?: string;
+  away_url?: string;
+  public_url?: string;
+  status?: string;
+  healthy?: boolean;
+  up?: boolean;
 };
 
 export type ChatMessage = {
