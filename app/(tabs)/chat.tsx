@@ -13,13 +13,17 @@ import * as Network from "expo-network";
 import { router } from "expo-router";
 import {
   ApiError,
+  NotPairedError,
+  UNPAIRED_MESSAGE,
   chatCompletions,
   clearPreferredBase,
   clientStatus,
   probeReachability,
 } from "../../src/lib/api";
+import { ModelSwitcher } from "../../src/components/ModelSwitcher";
 import { openCitationUrl } from "../../src/lib/homeOpeners";
 import { runObservationCycle } from "../../src/lib/observation";
+import { loadSession } from "../../src/lib/session";
 import type { ChatMessage } from "../../src/lib/types";
 import { colors, space } from "../../src/lib/theme";
 const URL_RE = /https?:\/\/[^\s)]+/g;
@@ -30,9 +34,23 @@ export default function ChatScreen() {
   const [busy, setBusy] = useState(false);
   const [statusLine, setStatusLine] = useState("Checking home…");
   const [needsRepair, setNeedsRepair] = useState(false);
+  const [connected, setConnected] = useState(false);
+  const [banner, setBanner] = useState<
+    | { kind: "unpaired"; message: string }
+    | { kind: "unreachable"; message: string; suggestPair: boolean }
+    | null
+  >(null);
 
   const refreshStatus = useCallback(async () => {
     try {
+      const session = await loadSession();
+      if (!session) {
+        setConnected(false);
+        setNeedsRepair(false);
+        setStatusLine("Not paired");
+        setBanner({ kind: "unpaired", message: UNPAIRED_MESSAGE });
+        return;
+      }
       const net = await Network.getNetworkStateAsync().catch(() => null);
       // Sync Away HTTPS URL from home when reachable (e.g. on Wi‑Fi after dashboard setup).
       await clientStatus().catch(() => undefined);
@@ -47,9 +65,23 @@ export default function ChatScreen() {
               : "Home VPN";
         setStatusLine(`Connected via ${via}${underlay}`);
         setNeedsRepair(false);
+        setConnected(true);
+        setBanner(null);
         return;
       }
-      setStatusLine(probe.error || "Unreachable — check Away access or home Wi‑Fi");
+      setConnected(false);
+      setNeedsRepair(false);
+      if (probe.reason === "not_paired") {
+        setStatusLine("Not paired");
+        setBanner({ kind: "unpaired", message: probe.message });
+        return;
+      }
+      setStatusLine("Home unreachable");
+      setBanner({
+        kind: "unreachable",
+        message: probe.message,
+        suggestPair: probe.suggestPair,
+      });
     } catch {
       setStatusLine(
         "Reaching home… Chat uses Wi‑Fi or Away HTTPS (Home VPN optional)",
@@ -84,10 +116,17 @@ export default function ChatScreen() {
       await refreshStatus();
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
+      const unpaired = e instanceof NotPairedError;
       const authFail =
-        (e instanceof ApiError && e.status === 401) ||
-        /auth failed|unauthorized|stale pair/i.test(msg);
-      if (authFail) {
+        !unpaired &&
+        ((e instanceof ApiError && e.status === 401) ||
+          /auth failed|unauthorized|stale pair/i.test(msg));
+      if (unpaired) {
+        setConnected(false);
+        setNeedsRepair(false);
+        setStatusLine("Not paired");
+        setBanner({ kind: "unpaired", message: msg });
+      } else if (authFail) {
         setNeedsRepair(true);
         setStatusLine("Connected path rejected auth — re-pair on home Wi‑Fi");
       }
@@ -95,9 +134,13 @@ export default function ChatScreen() {
         ...next,
         {
           role: "assistant",
-          content: authFail
-            ? `${msg}\n\nTap Re-pair below (home Wi‑Fi), scan a fresh dashboard QR, then send again.`
-            : `Could not reach home: ${msg}`,
+          content: unpaired
+            ? `${msg}\n\nTap Pair with home above.`
+            : authFail
+              ? `${msg}\n\nTap Re-pair below (home Wi‑Fi), scan a fresh dashboard QR, then send again.`
+              : msg.startsWith("Couldn’t reach home")
+                ? msg
+                : `Could not reach home: ${msg}`,
         },
       ]);
     } finally {
@@ -108,16 +151,44 @@ export default function ChatScreen() {
   return (
     <View style={styles.root}>
       <Text style={styles.status}>{statusLine}</Text>
+      {banner?.kind === "unpaired" ? (
+        <Pressable
+          style={styles.repairBanner}
+          onPress={() => router.push("/pair")}
+          accessibilityRole="button"
+          accessibilityLabel="Pair this phone with home"
+          testID="pair-banner"
+        >
+          <Text style={styles.repairText}>{banner.message}</Text>
+          <Text style={styles.repairAction}>Pair with home</Text>
+        </Pressable>
+      ) : null}
+      {banner?.kind === "unreachable" ? (
+        <View style={styles.unreachable} testID="unreachable-banner">
+          <Text style={styles.unreachableText}>{banner.message}</Text>
+          {banner.suggestPair ? (
+            <Pressable
+              onPress={() => router.push("/pair")}
+              accessibilityRole="button"
+              accessibilityLabel="Re-pair on home Wi-Fi"
+            >
+              <Text style={styles.repairAction}>Re-pair on home Wi‑Fi</Text>
+            </Pressable>
+          ) : null}
+        </View>
+      ) : null}
       {needsRepair ? (
         <Pressable
           style={styles.repairBanner}
           onPress={() => router.push("/pair")}
+          accessibilityRole="button"
         >
           <Text style={styles.repairText}>
             Re-pair on home Wi‑Fi — scan a fresh Remote Access QR
           </Text>
         </Pressable>
       ) : null}
+      {connected ? <ModelSwitcher presentation="chip" /> : null}
       <FlatList
         style={styles.list}
         data={messages}
@@ -145,8 +216,9 @@ export default function ChatScreen() {
         )}
         ListEmptyComponent={
           <Text style={styles.empty}>
-            Ask your home AtleyOS anything. Knowledge and models stay on your
-            server.
+            {banner?.kind === "unpaired"
+              ? "Pair this phone with home to chat. Your models stay on your server."
+              : "Ask your home AtleyOS anything. Knowledge and models stay on your server."}
           </Text>
         }
       />
@@ -195,6 +267,30 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     fontSize: 13,
     textAlign: "center",
+    lineHeight: 18,
+  },
+  repairAction: {
+    color: colors.accent,
+    fontWeight: "700",
+    fontSize: 13,
+    textAlign: "center",
+    marginTop: 6,
+  },
+  unreachable: {
+    marginHorizontal: space.md,
+    marginTop: space.sm,
+    paddingVertical: 10,
+    paddingHorizontal: space.md,
+    borderRadius: 10,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    gap: 4,
+  },
+  unreachableText: {
+    color: colors.text,
+    fontSize: 13,
+    lineHeight: 18,
   },
   list: { flex: 1 },
   empty: { color: colors.muted, lineHeight: 22 },

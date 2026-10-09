@@ -1,9 +1,17 @@
 import * as Network from "expo-network";
-import { normalizeClientApiBase } from "./apiBases";
+import {
+  isLoopbackClientBase,
+  normalizeClientApiBase,
+  orderedApiBases,
+  unpairedFallbackBases,
+} from "./apiBases";
+import { explainUnreachable, NotPairedError, UNPAIRED_MESSAGE } from "./connectionCopy";
+import { sessionPatchFromStatus } from "./statusSync";
 import type { HomeApp, PairPayload, Session } from "./types";
 import { loadSession, saveSession, updateSession } from "./session";
 
 export { normalizeClientApiBase } from "./apiBases";
+export { NotPairedError, UNPAIRED_MESSAGE } from "./connectionCopy";
 
 export class ApiError extends Error {
   status: number;
@@ -27,29 +35,21 @@ function sessionBases(session: Session): {
   };
 }
 
-/**
- * HTTPS-first reachability:
- * - Home VPN up → overlay, then HTTPS, then LAN
- * - Off home Wi‑Fi with Away URL → HTTPS only (skip LAN/overlay black holes)
- * - On Wi‑Fi, no VPN → HTTPS (if set), LAN, overlay last
- */
-function bases(
-  session: Session,
-  opts: { homeVpnUp?: boolean; onWifi?: boolean } = {},
-): string[] {
-  const { https, overlay, lan } = sessionBases(session);
-  const homeVpnUp = Boolean(opts.homeVpnUp);
-  const onWifi = opts.onWifi !== false;
-  let list: string[];
-  if (homeVpnUp) {
-    list = [overlay, https, lan];
-  } else if (!onWifi && https) {
-    // Cellular / non-Wi‑Fi: Chat must not wait on unreachable LAN or a dead VPN.
-    list = [https];
-  } else {
-    list = [https, lan, overlay];
+/** Physical phones must never call 127.0.0.1 (that address is the phone). */
+let loopbackDecision: Promise<boolean> | null = null;
+
+async function deviceAllowsLoopback(): Promise<boolean> {
+  if (!loopbackDecision) {
+    loopbackDecision = import("expo-device")
+      .then((Device) => Device.isDevice === false)
+      .catch(() => false);
   }
-  return [...new Set(list.filter(Boolean))];
+  return loopbackDecision;
+}
+
+function keepStoredBase(value: string, allowLoopback: boolean): string {
+  if (value && !allowLoopback && isLoopbackClientBase(value)) return "";
+  return value;
 }
 
 /** Cache last working API base so chat does not burn a long timeout on a dead hop. */
@@ -85,9 +85,17 @@ async function homeVpnTunnelUp(): Promise<boolean> {
 }
 
 async function orderedBases(session: Session): Promise<string[]> {
-  const vpnUp = await homeVpnTunnelUp();
-  const wifi = await onHomeWifi();
-  const all = bases(session, { homeVpnUp: vpnUp, onWifi: wifi });
+  const [vpnUp, wifi, allowLoopback] = await Promise.all([
+    homeVpnTunnelUp(),
+    onHomeWifi(),
+    deviceAllowsLoopback(),
+  ]);
+  const all = orderedApiBases(session, {
+    homeVpnUp: vpnUp,
+    onWifi: wifi,
+    allowLoopback,
+    httpsReady: session.httpsReady,
+  });
   const { lan, overlay } = sessionBases(session);
   // Away from Wi‑Fi: never prefer a cached LAN hop — it will hang Chat.
   if (!wifi) {
@@ -141,12 +149,14 @@ async function rawFetch(
 }
 
 /** Quick probe so we do not spend the chat timeout on an unreachable overlay/LAN hop. */
+type PickedBases = { bases: string[]; probed: string[] };
+
 async function pickReachableBase(
   session: Session,
   token?: string,
-): Promise<string[]> {
+): Promise<PickedBases> {
   const ordered = await orderedBases(session);
-  if (ordered.length <= 1) return ordered;
+  if (ordered.length <= 1) return { bases: ordered, probed: ordered };
   const wifi = await onHomeWifi();
   const { lan, overlay } = sessionBases(session);
   // Probe in parallel; keep preference order from orderedBases.
@@ -171,12 +181,31 @@ async function pickReachableBase(
   if (winners.length) {
     rememberBase(winners[0]);
     // Chat must not fall through to 180s timeouts on dead hops.
-    return winners;
+    return { bases: winners, probed: ordered };
   }
   // No authed probe winner: fail fast (especially off Wi‑Fi) instead of hanging Chat.
-  if (!wifi) return [];
+  if (!wifi) return { bases: [], probed: ordered };
   // On Wi‑Fi, try the first ordered base once (usually HTTPS, then LAN).
-  return ordered.slice(0, 1);
+  return { bases: ordered.slice(0, 1), probed: ordered };
+}
+
+async function failureFor(session: Session, tried: string[]): Promise<Error> {
+  const [wifi, allowLoopback] = await Promise.all([
+    onHomeWifi(),
+    deviceAllowsLoopback(),
+  ]);
+  const bases = sessionBases(session);
+  return new Error(
+    explainUnreachable({
+      onWifi: wifi,
+      allowLoopback,
+      https: bases.https,
+      lan: bases.lan,
+      overlay: bases.overlay,
+      tried,
+      httpsReady: session.httpsReady,
+    }).message,
+  );
 }
 
 /** Prefer /api/client/*; fall back to legacy /api/mobile/* on older hosts. */
@@ -199,21 +228,22 @@ export async function apiFetch<T = unknown>(
   const session = init.session === undefined ? await loadSession() : init.session;
   const token = init.token ?? session?.apiToken;
   const isChat = path.includes("/v1/chat/completions");
-  const tryBases = session
-    ? isChat
-      ? await pickReachableBase(session, token)
-      : await orderedBases(session)
-    : ["http://127.0.0.1:8765"];
+  let probed: string[] = [];
+  let tryBases: string[];
+  if (!session) {
+    tryBases = unpairedFallbackBases(await deviceAllowsLoopback());
+    probed = tryBases;
+    if (!tryBases.length) throw new NotPairedError(UNPAIRED_MESSAGE);
+  } else if (isChat) {
+    const picked = await pickReachableBase(session, token);
+    tryBases = picked.bases;
+    probed = picked.probed;
+  } else {
+    tryBases = await orderedBases(session);
+    probed = tryBases;
+  }
   if (session && tryBases.length === 0) {
-    const wifi = await onHomeWifi();
-    const https = sessionBases(session).https;
-    throw new Error(
-      !wifi && !https
-        ? "Away HTTPS is not on this phone yet. On home Wi‑Fi: finish Away access on the dashboard, open Chat once (or re-pair), then try again."
-        : !wifi
-          ? "Away HTTPS unreachable. Confirm cloudflared is running at home and the Away URL is correct."
-          : "No home address reachable. Is AtleyOS running on this Wi‑Fi?",
-    );
+    throw await failureFor(session, probed);
   }
   let lastErr: unknown;
   for (const base of tryBases) {
@@ -256,6 +286,7 @@ export async function apiFetch<T = unknown>(
       if (e instanceof ApiError && e.status !== 0) throw e;
     }
   }
+  if (session) throw await failureFor(session, probed.length ? probed : tryBases);
   throw lastErr instanceof Error ? lastErr : new Error("unreachable");
 }
 
@@ -264,6 +295,12 @@ export async function redeemPairing(
   opts: { deviceLabel: string; platform: string },
 ): Promise<Session> {
   const base = normalizeClientApiBase(payload.lan_api_base);
+  const allowLoopback = await deviceAllowsLoopback();
+  if (base && isLoopbackClientBase(base) && !allowLoopback) {
+    throw new Error(
+      `This pair QR uses ${base}, which is this phone. On the home dashboard open Remote Access → Show pair QR again so the phone gets the server’s LAN address.`,
+    );
+  }
   if (!base) {
     throw new Error("Pair QR missing lan_api_base — regenerate QR on the home dashboard");
   }
@@ -298,15 +335,17 @@ export async function redeemPairing(
     deviceId: String(body.device_id),
     apiToken: String(body.api_token),
     refreshToken: String(body.refresh_token),
-    lanApiBase:
-      normalizeClientApiBase(
-        String(body.lan_api_base || payload.lan_api_base),
-      ) || base,
-    overlayApiBase: normalizeClientApiBase(
-      String(body.overlay_api_base || payload.overlay_api_base || ""),
+    lanApiBase: keepStoredBase(
+      normalizeClientApiBase(String(body.lan_api_base || payload.lan_api_base)) || base,
+      allowLoopback,
     ),
-    httpsApiBase: normalizeClientApiBase(
-      String(body.https_api_base || payload.https_api_base || ""),
+    overlayApiBase: keepStoredBase(
+      normalizeClientApiBase(String(body.overlay_api_base || payload.overlay_api_base || "")),
+      allowLoopback,
+    ),
+    httpsApiBase: keepStoredBase(
+      normalizeClientApiBase(String(body.https_api_base || payload.https_api_base || "")),
+      allowLoopback,
     ),
     hostPublicKey: body.host_public_key ? String(body.host_public_key) : payload.host_public_key,
     pin: body.pin ? String(body.pin) : payload.pin,
@@ -318,6 +357,12 @@ export async function redeemPairing(
     homeVpnAvailable: Boolean(body.home_vpn_available ?? payload.home_vpn_available),
     profileContinuity: Boolean(body.profile_continuity ?? payload.profile_continuity),
     productModel: String(body.product_model || payload.product_model || "https_first_vpn_optional"),
+    httpsReady:
+      typeof body.https_ready === "boolean"
+        ? body.https_ready
+        : typeof body.away_https_ready === "boolean"
+          ? body.away_https_ready
+          : undefined,
   };
   await saveSession(session);
   clearPreferredBase();
@@ -331,8 +376,8 @@ async function refreshSession(session: Session): Promise<Session | null> {
   if (refreshInFlight) return refreshInFlight;
   refreshInFlight = (async () => {
     // Prefer bases that already accept this device; never refresh via a 401 hop.
-    const candidates = await pickReachableBase(session, session.apiToken);
-    const bases = candidates.length ? candidates : await orderedBases(session);
+    const picked = await pickReachableBase(session, session.apiToken);
+    const bases = picked.bases.length ? picked.bases : await orderedBases(session);
     for (const base of bases) {
       try {
         const res = await clientFetch(base, "/api/client/session/refresh", {
@@ -368,38 +413,14 @@ export async function clientStatus() {
     product_model?: string;
   }>("/api/client/status");
   // Sync Away + LAN bases from home (fixes :8080 / stale tunnel leftovers).
+  // Explicit empty https_api_base clears Away. https_ready false keeps the URL
+  // for the error text but stops dialing it until the tunnel is up.
+  // Loopback addresses from the host are not stored on a phone.
   const session = await loadSession();
   if (session) {
-    const ra = body.remote_access as
-      | { https_api_base?: string; lan_api_base?: string }
-      | undefined;
-    const https = normalizeClientApiBase(
-      body.https_api_base || ra?.https_api_base || "",
-    );
-    const lan = normalizeClientApiBase(
-      body.lan_api_base || ra?.lan_api_base || "",
-    );
-    const patch: Partial<Session> = {};
-    if (https && https !== normalizeClientApiBase(session.httpsApiBase)) {
-      patch.httpsApiBase = https;
-    }
-    if (lan && lan !== normalizeClientApiBase(session.lanApiBase)) {
-      patch.lanApiBase = lan;
-    }
-    // Drop durable-invalid cached Away URL even when status omits https.
-    if (
-      !https &&
-      session.httpsApiBase &&
-      !normalizeClientApiBase(session.httpsApiBase)
-    ) {
-      patch.httpsApiBase = "";
-    }
-    if (
-      typeof body.profile_continuity === "boolean" &&
-      body.profile_continuity !== session.profileContinuity
-    ) {
-      patch.profileContinuity = body.profile_continuity;
-    }
+    const patch = sessionPatchFromStatus(session, body as Record<string, unknown>, {
+      allowLoopback: await deviceAllowsLoopback(),
+    });
     if (Object.keys(patch).length) {
       await updateSession(patch);
       clearPreferredBase();
@@ -408,17 +429,18 @@ export async function clientStatus() {
   return body;
 }
 
+export type Reachability =
+  | { ok: true; base: string; mode: "https" | "lan" | "overlay" }
+  | { ok: false; reason: "not_paired"; message: string }
+  | { ok: false; reason: "unreachable"; message: string; suggestPair: boolean };
+
 /** Probe which API base answers (HTTPS away / LAN / optional Home VPN overlay). */
-export async function probeReachability(session?: Session | null): Promise<{
-  ok: boolean;
-  base?: string;
-  mode?: "https" | "lan" | "overlay";
-  error?: string;
-}> {
+export async function probeReachability(session?: Session | null): Promise<Reachability> {
   const s = session === undefined ? await loadSession() : session;
-  if (!s) return { ok: false, error: "not_paired" };
+  if (!s) return { ok: false, reason: "not_paired", message: UNPAIRED_MESSAGE };
   const { https, lan } = sessionBases(s);
-  for (const base of await pickReachableBase(s, s.apiToken)) {
+  const picked = await pickReachableBase(s, s.apiToken);
+  for (const base of picked.bases) {
     try {
       const res = await clientFetch(base, "/api/client/status", {
         token: s.apiToken,
@@ -432,18 +454,22 @@ export async function probeReachability(session?: Session | null): Promise<{
       /* try next */
     }
   }
-  const wifi = await onHomeWifi();
-  if (!wifi && !https) {
-    return {
-      ok: false,
-      error:
-        "Away HTTPS is not set on this phone. On home Wi‑Fi: enable Away access on the dashboard, then re-pair (or open Chat once on Wi‑Fi to sync).",
-    };
-  }
+  const [wifi, allowLoopback] = await Promise.all([onHomeWifi(), deviceAllowsLoopback()]);
+  const bases = sessionBases(s);
+  const explained = explainUnreachable({
+    onWifi: wifi,
+    allowLoopback,
+    https: bases.https,
+    lan: bases.lan,
+    overlay: bases.overlay,
+    tried: picked.probed,
+    httpsReady: s.httpsReady,
+  });
   return {
     ok: false,
-    error:
-      "Home API unreachable. On Wi‑Fi check AtleyOS is running; away from home use Away HTTPS (Home VPN is optional).",
+    reason: "unreachable",
+    message: explained.message,
+    suggestPair: explained.suggestPair,
   };
 }
 
@@ -488,7 +514,7 @@ export async function chatCompletions(
   opts?: { stream?: boolean },
 ): Promise<{ content: string }> {
   const session = await loadSession();
-  if (!session) throw new Error("not_paired");
+  if (!session) throw new NotPairedError(UNPAIRED_MESSAGE);
   const body = {
     model: "atleyos",
     messages,

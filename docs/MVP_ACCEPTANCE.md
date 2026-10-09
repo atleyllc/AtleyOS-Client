@@ -14,6 +14,8 @@ Run once on **iOS** and once on **Android**.
 | 5 | Chat on LAN **with Home VPN Off** | | |
 | 6 | Learning consent → OS permission prompts | | |
 | 7 | Chat: send message; reply from home | | |
+| 7b | Chat model chip and Settings list installed models; active model changes; remote models say Leaves home. Older host without `/api/client/models` still chats | | |
+| 7c | Unpaired Chat says the phone isn’t paired and opens pairing (no `127.0.0.1`). Paired-but-down Chat names the LAN or Away address it tried | | |
 | 8 | Observation sync status shows activity | | |
 | 9 | Cellular: Chat via Away HTTPS with Home VPN **Off** | | |
 | 10 | Profile Continuity: Observation uploads with VPN Off (or queues) | | |

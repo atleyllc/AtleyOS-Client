@@ -24,6 +24,7 @@ import {
   runObservationCycle,
 } from "../../src/lib/observation";
 import type { SyncStatus } from "../../src/lib/types";
+import { ModelSwitcher } from "../../src/components/ModelSwitcher";
 import { colors, space } from "../../src/lib/theme";
 
 export default function SettingsScreen() {
@@ -78,6 +79,9 @@ export default function SettingsScreen() {
     >
       <Text style={styles.h}>Device</Text>
       <Text style={styles.p}>{label || "Paired client"}</Text>
+
+      <Text style={styles.h}>Chat model</Text>
+      <ModelSwitcher presentation="inline" />
 
       <Text style={styles.h}>Home connection</Text>
       <Text style={styles.p}>
