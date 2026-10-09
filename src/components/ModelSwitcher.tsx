@@ -4,6 +4,7 @@ import {
   Alert,
   Modal,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   View,
@@ -126,6 +127,7 @@ export function ModelSwitcher({ presentation }: { presentation: Presentation }) 
 
   if (presentation === "chip") {
     if (catalog && !catalog.supported) return null;
+    if (!catalog && !error) return null;
     return (
       <>
         <Pressable
@@ -149,7 +151,9 @@ export function ModelSwitcher({ presentation }: { presentation: Presentation }) 
               <Text style={styles.lede}>
                 Local models stay on your home server. Anything remote is marked Leaves home.
               </Text>
-              {list}
+              <ScrollView style={styles.sheetScroll} keyboardShouldPersistTaps="handled">
+                {list}
+              </ScrollView>
               <Pressable
                 style={styles.close}
                 onPress={() => setOpen(false)}
@@ -277,8 +281,8 @@ const styles = StyleSheet.create({
     borderTopRightRadius: 16,
     padding: space.md,
     gap: space.sm,
-    maxHeight: "80%",
   },
+  sheetScroll: { maxHeight: 420 },
   h: { color: colors.text, fontWeight: "700", fontSize: 16 },
   lede: { color: colors.muted, lineHeight: 20 },
   p: { color: colors.muted, lineHeight: 20 },
