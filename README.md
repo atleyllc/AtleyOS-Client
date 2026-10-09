@@ -43,6 +43,8 @@ Gap list: [`docs/PARITY-2026-10-09.md`](docs/PARITY-2026-10-09.md)
 
 Settings → **Chat model**, and the model chip on Chat, list installed models from `GET /api/client/models` and set the active chat model with `POST /api/client/models/active` (`{"role":"conversation","model":"<name>"}`). Local models stay on the home server. A remote model is labeled **Leaves home**. If Ollama is down, the picker says **Ollama not running at home**. If the home server is older and that route 404s, Chat still works and the picker says this server has no model list. See [`docs/MODELS.md`](docs/MODELS.md).
 
+Chat asks home to stream the reply and keeps earlier threads on this phone. History also lists `GET /api/client/conversations` when that route returns them. Approvals uses the real list. You shows Memory only when `GET /api/client/memory` exists. Install steps: [`docs/PHONE.md`](docs/PHONE.md).
+
 ## Connection status
 
 An unpaired phone does not call `http://127.0.0.1:8765` (that address is the phone). Chat says the phone isn’t paired yet and opens the pair screen. When the phone is paired but home doesn’t answer, Chat names each address it tried — LAN (`http://192.168.8.140:8765`) or Away (`https://atleyos.atley.llc`) — and what to check. Away is used only when the home server says the tunnel is up.
@@ -50,8 +52,8 @@ An unpaired phone does not call `http://127.0.0.1:8765` (that address is the pho
 ## Project layout
 
 ```
-app/                 Expo Router screens (pair, learn, tabs)
-src/lib/             API, session (SecureStore), models, WG shim, Observation, openers
-src/components/      Chat model switcher
-docs/                Acceptance, threat model, store privacy
+app/                 Expo Router screens (pair, setup, learn, tabs)
+src/lib/             API, session (SecureStore), models, chat, approvals, WG, Observation
+src/components/      Shared sections and the chat model switcher
+docs/                Parity, phone install, acceptance, threat model
 ```

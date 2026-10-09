@@ -6,6 +6,7 @@ import {
   unpairedFallbackBases,
 } from "./apiBases";
 import { explainUnreachable, NotPairedError, UNPAIRED_MESSAGE } from "./connectionCopy";
+import { reduceChatStream } from "./sseChat";
 import { sessionPatchFromStatus } from "./statusSync";
 import type { HomeApp, PairPayload, Session } from "./types";
 import { loadSession, saveSession, updateSession } from "./session";
@@ -534,6 +535,76 @@ export async function chatCompletions(
   });
   const content = out?.choices?.[0]?.message?.content ?? "";
   return { content };
+}
+
+const STREAM_UNSUPPORTED = new Set([400, 404, 405, 406, 415, 501]);
+
+/**
+ * Ask home to stream, then fall back to one JSON reply when this server
+ * does not stream. `model: "atleyos"` lets the server use the active chat model.
+ */
+export async function chatCompletionsStream(
+  messages: { role: string; content: string }[],
+  onDelta: (content: string) => void,
+): Promise<{ content: string; streamed: boolean }> {
+  const session = await loadSession();
+  if (!session) throw new NotPairedError(UNPAIRED_MESSAGE);
+  try {
+    const streamed = await postChatStream(session, messages, onDelta);
+    return streamed;
+  } catch (error) {
+    if (error instanceof ApiError && (error.status === 401 || STREAM_UNSUPPORTED.has(error.status))) {
+      const done = await chatCompletions(messages);
+      if (done.content) onDelta(done.content);
+      return { content: done.content, streamed: false };
+    }
+    throw error;
+  }
+}
+
+async function postChatStream(
+  session: Session,
+  messages: { role: string; content: string }[],
+  onDelta: (content: string) => void,
+): Promise<{ content: string; streamed: boolean }> {
+  const token = session.apiToken;
+  const picked = await pickReachableBase(session, token);
+  if (!picked.bases.length) throw await failureFor(session, picked.probed);
+  const base = picked.bases[0];
+  const payload = JSON.stringify({ model: "atleyos", messages, stream: true });
+  const result = await new Promise<{ content: string; streamed: boolean; status: number; raw: string }>(
+    (resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", `${base}/v1/chat/completions`);
+      xhr.setRequestHeader("Accept", "text/event-stream, application/json");
+      xhr.setRequestHeader("Content-Type", "application/json");
+      if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+      xhr.timeout = 180000;
+      const pump = (final: boolean) => {
+        const reduced = reduceChatStream(xhr.responseText || "", final);
+        if (reduced.content) onDelta(reduced.content);
+        return reduced;
+      };
+      xhr.onprogress = () => {
+        pump(false);
+      };
+      xhr.onerror = () => reject(new Error(`Couldn’t reach home at ${base}`));
+      xhr.ontimeout = () => reject(new Error(`Home at ${base} didn’t answer in time`));
+      xhr.onload = () => {
+        const reduced = pump(true);
+        resolve({ ...reduced, status: xhr.status, raw: xhr.responseText || "" });
+      };
+      xhr.send(payload);
+    },
+  );
+  if (result.status === 401 || STREAM_UNSUPPORTED.has(result.status)) {
+    throw new ApiError(`HTTP ${result.status}`, result.status, result.raw);
+  }
+  if (result.status < 200 || result.status >= 300) {
+    throw new ApiError(`HTTP ${result.status}`, result.status, result.raw);
+  }
+  rememberBase(base);
+  return { content: result.content, streamed: result.streamed };
 }
 
 export async function listConversations() {

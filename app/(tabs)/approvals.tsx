@@ -1,99 +1,96 @@
-import { useState } from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { useCallback, useState } from "react";
+import { Alert, ScrollView, StyleSheet, Text } from "react-native";
+import { useFocusEffect } from "expo-router";
+import { PrimaryButton, QuietButton, ScreenIntro, Section } from "../../src/components/ui";
 import {
-  listApprovals,
-  resolveApproval,
-  seedDemoApproval,
-  type PendingApproval,
+  decideApproval,
+  fetchApprovals,
+  rememberApprovalIds,
+  type ApprovalItem,
 } from "../../src/lib/approvals";
 import { colors, space } from "../../src/lib/theme";
 
 export default function ApprovalsScreen() {
-  const [items, setItems] = useState<PendingApproval[]>(listApprovals());
+  const [supported, setSupported] = useState(true);
+  const [items, setItems] = useState<ApprovalItem[]>([]);
+  const [error, setError] = useState("");
+  const [busyId, setBusyId] = useState<string | null>(null);
 
-  function refresh() {
-    setItems(listApprovals());
+  const load = useCallback(async () => {
+    try {
+      const next = await fetchApprovals();
+      setSupported(next.supported);
+      setItems(next.items);
+      setError("");
+      if (next.supported) await rememberApprovalIds(next.items.map((item) => item.id));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      void load();
+      const timer = setInterval(() => void load(), 20000);
+      return () => clearInterval(timer);
+    }, [load]),
+  );
+
+  async function decide(item: ApprovalItem, decision: "allow" | "deny") {
+    setBusyId(item.id);
+    try {
+      await decideApproval(item.id, decision);
+      setItems((current) => current.filter((row) => row.id !== item.id));
+    } catch (e) {
+      Alert.alert(
+        "Couldn’t record that",
+        e instanceof Error ? e.message : String(e),
+      );
+    } finally {
+      setBusyId(null);
+    }
   }
 
   return (
-    <View style={styles.root}>
-      <Text style={styles.lede}>
-        Action assent when you are away. Push notifications will carry opaque
-        ids only — never Knowledge contents.
-      </Text>
-      <Pressable
-        style={styles.secondary}
-        onPress={() => {
-          seedDemoApproval();
-          refresh();
-        }}
-      >
-        <Text style={styles.secondaryText}>Load sample pending approval</Text>
-      </Pressable>
-      {items.length === 0 ? (
-        <Text style={styles.empty}>No pending approvals</Text>
+    <ScrollView style={styles.root} contentContainerStyle={styles.content}>
+      <ScreenIntro
+        title="Approvals"
+        subtitle="When home needs a decision, it shows up here. A notice on this phone says something is waiting — it does not include the details."
+      />
+      {error ? (
+        <Section eyebrow="Everyday" title="Couldn’t load">
+          <Text style={styles.body}>{error}</Text>
+          <PrimaryButton label="Try again" onPress={() => void load()} />
+        </Section>
+      ) : !supported ? (
+        <Section eyebrow="Everyday" title="Not on this server">
+          <Text style={styles.body}>
+            This home server doesn’t share approvals with the phone yet. Nothing here is a sample.
+          </Text>
+        </Section>
+      ) : items.length === 0 ? (
+        <Section eyebrow="Everyday" title="Waiting">
+          <Text style={styles.body}>Nothing is waiting for you.</Text>
+        </Section>
       ) : (
         items.map((item) => (
-          <View key={item.id} style={styles.card}>
-            <Text style={styles.title}>{item.title}</Text>
-            <Text style={styles.summary}>{item.summary}</Text>
-            <View style={styles.row}>
-              <Pressable
-                style={styles.allow}
-                onPress={() => {
-                  resolveApproval(item.id, "allow");
-                  refresh();
-                }}
-              >
-                <Text style={styles.btnText}>Allow</Text>
-              </Pressable>
-              <Pressable
-                style={styles.deny}
-                onPress={() => {
-                  resolveApproval(item.id, "deny");
-                  refresh();
-                }}
-              >
-                <Text style={styles.btnText}>Deny</Text>
-              </Pressable>
-            </View>
-          </View>
+          <Section key={item.id} eyebrow="Everyday" title={item.title}>
+            {item.summary ? <Text style={styles.body}>{item.summary}</Text> : null}
+            <PrimaryButton
+              label={busyId === item.id ? "Sending…" : "Allow"}
+              onPress={() => void decide(item, "allow")}
+              disabled={busyId != null}
+            />
+            <QuietButton label="Deny" danger onPress={() => void decide(item, "deny")} />
+          </Section>
         ))
       )}
-    </View>
+    </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: colors.bg, padding: space.md, gap: space.md },
-  lede: { color: colors.muted, lineHeight: 20 },
-  empty: { color: colors.muted },
-  card: {
-    backgroundColor: colors.surface,
-    borderRadius: 14,
-    padding: space.md,
-    gap: space.sm,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  title: { color: colors.text, fontWeight: "700", fontSize: 16 },
-  summary: { color: colors.muted },
-  row: { flexDirection: "row", gap: space.sm },
-  allow: {
-    flex: 1,
-    backgroundColor: colors.ok,
-    padding: 12,
-    borderRadius: 10,
-    alignItems: "center",
-  },
-  deny: {
-    flex: 1,
-    backgroundColor: colors.danger,
-    padding: 12,
-    borderRadius: 10,
-    alignItems: "center",
-  },
-  btnText: { color: "#fff", fontWeight: "700" },
-  secondary: { padding: 8 },
-  secondaryText: { color: colors.accent },
+  root: { flex: 1, backgroundColor: colors.bg },
+  content: { padding: space.md, gap: space.md, paddingBottom: space.xl },
+  body: { color: colors.muted, lineHeight: 21 },
 });

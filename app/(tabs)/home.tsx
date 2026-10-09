@@ -3,6 +3,7 @@ import { Alert, Linking, Platform, ScrollView, StyleSheet, Text } from "react-na
 import * as Clipboard from "expo-clipboard";
 import * as Network from "expo-network";
 import { useFocusEffect } from "expo-router";
+import { fetchFavorites, toggleFavorite, type Favorite } from "../../src/lib/favorites";
 import { loadHomeApps } from "../../src/lib/homeOpeners";
 import {
   homeStatusLine,
@@ -16,7 +17,10 @@ import { colors, space } from "../../src/lib/theme";
 
 export default function HomeRailScreen() {
   const [links, setLinks] = useState<HomeLink[]>([]);
+  const [favorites, setFavorites] = useState<Favorite[]>([]);
+  const [favoritesSupported, setFavoritesSupported] = useState(false);
   const [note, setNote] = useState("");
+  const [toggleId, setToggleId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     const session = await loadSession();
@@ -38,6 +42,16 @@ export default function HomeRailScreen() {
     });
     setLinks(next);
     setNote(warning);
+    if (session) {
+      try {
+        const fav = await fetchFavorites();
+        setFavoritesSupported(fav.supported);
+        setFavorites(fav.favorites);
+      } catch {
+        setFavoritesSupported(false);
+        setFavorites([]);
+      }
+    }
   }, []);
 
   useFocusEffect(
@@ -98,6 +112,38 @@ export default function HomeRailScreen() {
           </Disclosure>
         </Section>
       ))}
+      {favoritesSupported ? (
+        <Section eyebrow="Everyday" title="Favorites">
+          <Text style={styles.body}>
+            {favorites.length
+              ? "These come from home. Toggle sends that favorite to the home server."
+              : "Home didn’t return any favorites."}
+          </Text>
+          {favorites.map((favorite) => (
+            <QuietButton
+              key={favorite.id}
+              label={
+                toggleId === favorite.id
+                  ? "Sending…"
+                  : `${favorite.label}${favorite.state ? ` · ${favorite.state}` : ""}`
+              }
+              onPress={() =>
+                void (async () => {
+                  setToggleId(favorite.id);
+                  try {
+                    await toggleFavorite(favorite);
+                    await load();
+                  } catch (e) {
+                    Alert.alert(favorite.label, e instanceof Error ? e.message : String(e));
+                  } finally {
+                    setToggleId(null);
+                  }
+                })()
+              }
+            />
+          ))}
+        </Section>
+      ) : null}
       {extra.length ? (
         <Section eyebrow="Advanced" title="Other apps">
           {extra.map((link) => (
