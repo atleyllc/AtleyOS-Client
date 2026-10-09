@@ -4,14 +4,42 @@ The home server owns the model list. The phone reads it and can change the activ
 
 | Call | Purpose |
 |------|---------|
-| `GET /api/client/models` | Installed models and which one is active |
-| `POST /api/client/models/active` | Set the active chat model |
+| `GET /api/client/models` | Installed models, the active role map, and whether Ollama is up |
+| `POST /api/client/models/active` | Set the model for one role |
 
-Both use the same Bearer token as the other `/api/client/*` routes (port **8765**). The host contract lives in AtleyOS `docs/models.md`.
+Both use the same Bearer device token as the other `/api/client/*` routes (port **8765**). The host contract is AtleyOS `docs/models.md`.
 
-The client posts `{ "id", "model_id" }` with the same value, and accepts a list under `models` or `installed_models`. Local is the default. A remote model (`location: "remote"` or `leaves_home: true`) is labeled **Leaves home**, using the host’s label when it sends one.
+Chat on the phone is the **conversation** role. The client posts:
 
-A **404 / 405 / 501** means this home server is older and has no model route. Chat keeps working with whatever model the server is already using. The picker says so instead of failing the screen.
+```json
+{ "role": "conversation", "model": "llama3.1:8b" }
+```
+
+`chat` is the same role as `conversation`. Other roles the host accepts are `coding`, `summarization`, and `lightweight_offline`. The model must already be installed.
+
+A catalog looks like:
+
+```json
+{
+  "ok": true,
+  "chat_model": "phi4:latest",
+  "active": { "conversation": "phi4:latest", "coding": null },
+  "models": [
+    {
+      "name": "phi4:latest",
+      "size_bytes": 9000000000,
+      "status": "installed",
+      "location": "local"
+    }
+  ],
+  "ollama": { "reachable": true, "endpoint": "http://127.0.0.1:11434" },
+  "remote": { "enabled": false, "leaves_machine": false }
+}
+```
+
+The active chat model is `active.conversation`, then `chat_model`. Only `status: "installed"` rows are listed. Local is the default. `location: "remote"` (or `leaves_home: true`) is labeled **Leaves home**. When `ollama.reachable` is false, the picker says **Ollama not running at home**.
+
+Older list shapes (`id`, `installed_models`, `active: { "id" }`) still parse. A **404 / 405 / 501** means this home server has no model route. Chat keeps working, and the picker says so.
 
 ## Where it shows up
 

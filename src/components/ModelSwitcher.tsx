@@ -10,6 +10,7 @@ import {
   View,
 } from "react-native";
 import { useFocusEffect } from "expo-router";
+import { formatModelSize } from "../lib/modelCatalog";
 import {
   listInstalledModels,
   setActiveChatModel,
@@ -22,7 +23,7 @@ type Presentation = "inline" | "chip";
 
 function subtitle(model: InstalledModel): string {
   const place = model.leavesHome ? model.leavingHomeLabel || "Leaves home" : "On this server";
-  return model.provider ? `${model.provider} · ${place}` : place;
+  return [formatModelSize(model.sizeBytes), model.provider, place].filter(Boolean).join(" · ");
 }
 
 export function ModelSwitcher({ presentation }: { presentation: Presentation }) {
@@ -139,6 +140,11 @@ export function ModelSwitcher({ presentation }: { presentation: Presentation }) 
         >
           <Text style={styles.chipText}>{chipLabel}</Text>
         </Pressable>
+        {catalog?.ollamaMessage ? (
+          <Text style={styles.ollamaNote} accessibilityRole="alert">
+            {catalog.ollamaMessage}
+          </Text>
+        ) : null}
         <Modal
           visible={open}
           animationType="slide"
@@ -217,11 +223,19 @@ function ModelList({
       </Text>
     );
   }
-  if (catalog.models.length === 0) {
+  if (catalog.models.length === 0 && !catalog.ollamaMessage) {
     return <Text style={styles.p}>No models are installed on this home server yet.</Text>;
   }
   return (
     <View style={styles.list} accessibilityRole="radiogroup">
+      {catalog.ollamaMessage ? (
+        <Text style={styles.ollama} accessibilityRole="alert">
+          {catalog.ollamaMessage}
+        </Text>
+      ) : null}
+      {catalog.models.length === 0 ? (
+        <Text style={styles.p}>No models are installed on this home server yet.</Text>
+      ) : null}
       {catalog.models.map((model) => {
         const busy = busyId === model.id;
         return (
@@ -270,6 +284,13 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
   },
   chipText: { color: colors.text, fontSize: 13, fontWeight: "600" },
+  ollamaNote: {
+    color: colors.danger,
+    fontWeight: "700",
+    fontSize: 13,
+    marginHorizontal: space.md,
+    marginTop: space.xs,
+  },
   backdrop: {
     flex: 1,
     justifyContent: "flex-end",
@@ -305,6 +326,11 @@ const styles = StyleSheet.create({
   name: { color: colors.text, fontWeight: "700" },
   meta: { color: colors.muted, fontSize: 12 },
   leaves: { color: colors.danger },
+  ollama: {
+    color: colors.danger,
+    fontWeight: "700",
+    lineHeight: 20,
+  },
   active: { color: colors.accent, fontWeight: "700" },
   use: { color: colors.muted, fontWeight: "600" },
   close: { paddingVertical: 12, alignItems: "center" },

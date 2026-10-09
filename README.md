@@ -39,7 +39,7 @@ For store / WireGuard Network Extension builds, use EAS (`eas.json`) with a cust
 
 ## Chat models
 
-Settings → **Chat model**, and the model chip on Chat, list installed models from `GET /api/client/models` and set the active one with `POST /api/client/models/active`. Local models stay on the home server. A remote model is labeled **Leaves home**. If the home server is older and that route 404s, Chat still works and the picker says this server has no model list. See [`docs/MODELS.md`](docs/MODELS.md).
+Settings → **Chat model**, and the model chip on Chat, list installed models from `GET /api/client/models` and set the active chat model with `POST /api/client/models/active` (`{"role":"conversation","model":"<name>"}`). Local models stay on the home server. A remote model is labeled **Leaves home**. If Ollama is down, the picker says **Ollama not running at home**. If the home server is older and that route 404s, Chat still works and the picker says this server has no model list. See [`docs/MODELS.md`](docs/MODELS.md).
 
 ## Connection status
 

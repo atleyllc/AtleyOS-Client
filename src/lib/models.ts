@@ -3,6 +3,7 @@ import {
   activeModelRequestBody,
   isModelsRouteMissing,
   parseModelCatalog,
+  unsupportedModelCatalog,
   type ModelCatalog,
 } from "./modelCatalog";
 
@@ -21,7 +22,7 @@ export async function listInstalledModels(): Promise<ModelCatalog> {
     return parseModelCatalog(body);
   } catch (e) {
     if (e instanceof ApiError && isModelsRouteMissing(e.status)) {
-      return { supported: false, models: [], activeId: null };
+      return unsupportedModelCatalog();
     }
     throw e;
   }
