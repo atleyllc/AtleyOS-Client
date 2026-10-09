@@ -14,18 +14,13 @@ const VPN_SERVICE =
 
 const NETWORK_SECURITY_CONFIG = `<?xml version="1.0" encoding="utf-8"?>
 <network-security-config>
-  <!-- Home LAN + WireGuard overlay use cleartext HTTP for the client API. -->
-  <base-config cleartextTrafficPermitted="false">
+  <!-- One base-config only. LAN and the overlay use cleartext HTTP.
+       Away HTTPS uses the system certificate store. -->
+  <base-config cleartextTrafficPermitted="true">
     <trust-anchors>
       <certificates src="system" />
     </trust-anchors>
   </base-config>
-  <domain-config cleartextTrafficPermitted="true">
-    <domain includeSubdomains="true">10.55.0.1</domain>
-    <domain includeSubdomains="true">localhost</domain>
-    <domain includeSubdomains="true">127.0.0.1</domain>
-  </domain-config>
-  <base-config cleartextTrafficPermitted="true" />
 </network-security-config>
 `;
 
