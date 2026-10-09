@@ -32,6 +32,7 @@ export default function HomeRailScreen() {
     const next = presentHomeLinks({
       apps,
       lanApiBase: session?.lanApiBase,
+      httpsApiBase: session?.httpsApiBase,
       onWifi: net?.type === Network.NetworkStateType.WIFI,
       homeVpnUp: tunnel?.status === "up" && tunnel.mode === "overlay",
     });

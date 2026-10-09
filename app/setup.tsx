@@ -183,6 +183,7 @@ async function linksForSession() {
   return presentHomeLinks({
     apps,
     lanApiBase: session?.lanApiBase,
+    httpsApiBase: session?.httpsApiBase,
     onWifi: net?.type === Network.NetworkStateType.WIFI,
   });
 }

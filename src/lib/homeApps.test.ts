@@ -69,6 +69,45 @@ describe("home apps", () => {
     assert.equal(findHomeLink(links, "photos")?.openMode, "none");
   });
 
+  it("keeps an explicit empty LAN URL empty", () => {
+    const links = presentHomeLinks({
+      apps: [{ id: "files", title: "Files", app: "nextcloud", lan_url: "", status: "down" }],
+      lanApiBase: "http://192.168.8.140:8765",
+      onWifi: true,
+    });
+    const files = findHomeLink(links, "files");
+    assert.equal(files?.lanUrl, "");
+    assert.equal(files?.openUrl, "");
+    assert.equal(files?.status, "down");
+  });
+
+  it("drops the client API host from an app Away URL", () => {
+    const links = presentHomeLinks({
+      apps: [
+        {
+          id: "photos",
+          title: "Photos",
+          app: "immich",
+          lan_url: "http://192.168.8.140:2283",
+          https_url: "https://atleyos.atley.llc",
+        },
+        {
+          id: "media",
+          title: "Media",
+          app: "jellyfin",
+          lan_url: "http://192.168.8.140:8097",
+          https_url: "https://media.example",
+        },
+      ],
+      lanApiBase: "http://192.168.8.140:8765",
+      httpsApiBase: "https://media.example",
+      onWifi: false,
+    });
+    assert.equal(findHomeLink(links, "photos")?.awayUrl, "");
+    assert.equal(findHomeLink(links, "photos")?.openUrl, "http://192.168.8.140:2283");
+    assert.equal(findHomeLink(links, "media")?.awayUrl, "");
+  });
+
   it("fills a missing LAN URL from the standard port", () => {
     const links = presentHomeLinks({
       apps: [{ id: "photos", title: "Photos", app: "immich", status: "up" }],
