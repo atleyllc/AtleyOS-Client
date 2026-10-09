@@ -15,21 +15,32 @@ import {
   ApiError,
   NotPairedError,
   UNPAIRED_MESSAGE,
-  chatCompletions,
+  chatCompletionsStream,
   clearPreferredBase,
   clientStatus,
   probeReachability,
 } from "../../src/lib/api";
 import { ModelSwitcher } from "../../src/components/ModelSwitcher";
+import { Disclosure } from "../../src/components/ui";
+import { saveThread, loadThreads } from "../../src/lib/chatHistory";
+import { threadTitle, type LocalThread } from "../../src/lib/chatThreads";
+import { fetchConversation, fetchConversations } from "../../src/lib/conversations";
+import type { ServerConversation } from "../../src/lib/conversationParse";
 import { openCitationUrl } from "../../src/lib/homeOpeners";
 import { runObservationCycle } from "../../src/lib/observation";
 import { loadSession } from "../../src/lib/session";
 import type { ChatMessage } from "../../src/lib/types";
 import { colors, space } from "../../src/lib/theme";
+
 const URL_RE = /https?:\/\/[^\s)]+/g;
 
 export default function ChatScreen() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [threadId, setThreadId] = useState("");
+  const [conversationId, setConversationId] = useState<string | null>(null);
+  const [threads, setThreads] = useState<LocalThread[]>([]);
+  const [serverThreads, setServerThreads] = useState<ServerConversation[]>([]);
+  const [serverNote, setServerNote] = useState("");
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [statusLine, setStatusLine] = useState("Checking home…");
@@ -52,17 +63,12 @@ export default function ChatScreen() {
         return;
       }
       const net = await Network.getNetworkStateAsync().catch(() => null);
-      // Sync Away HTTPS URL from home when reachable (e.g. on Wi‑Fi after dashboard setup).
       await clientStatus().catch(() => undefined);
       const probe = await probeReachability();
       if (probe.ok) {
         const underlay = net?.type ? ` · ${net.type}` : "";
         const via =
-          probe.mode === "https"
-            ? "Away HTTPS"
-            : probe.mode === "lan"
-              ? "home Wi‑Fi"
-              : "Home VPN";
+          probe.mode === "https" ? "Away HTTPS" : probe.mode === "lan" ? "home Wi‑Fi" : "Home VPN";
         setStatusLine(`Connected via ${via}${underlay}`);
         setNeedsRepair(false);
         setConnected(true);
@@ -83,43 +89,109 @@ export default function ChatScreen() {
         suggestPair: probe.suggestPair,
       });
     } catch {
-      setStatusLine(
-        "Reaching home… Chat uses Wi‑Fi or Away HTTPS (Home VPN optional)",
+      setStatusLine("Reaching home… Chat uses Wi‑Fi or Away HTTPS (Home VPN optional)");
+    }
+  }, []);
+
+  const refreshHistory = useCallback(async () => {
+    setThreads(await loadThreads());
+    try {
+      const remote = await fetchConversations();
+      setServerThreads(remote.supported ? remote.conversations : []);
+      setServerNote(
+        remote.supported
+          ? ""
+          : "This home server doesn’t share Chat history. Threads you start here stay on this phone.",
       );
+    } catch (error) {
+      setServerNote(error instanceof Error ? error.message : String(error));
     }
   }, []);
 
   useEffect(() => {
     void refreshStatus();
+    void refreshHistory();
     void runObservationCycle().catch(() => undefined);
     const sub = Network.addNetworkStateListener(() => {
       clearPreferredBase();
-      // Do not auto-start Home VPN for Chat — only refresh reachability.
       void refreshStatus();
     });
     return () => sub.remove();
-  }, [refreshStatus]);
+  }, [refreshHistory, refreshStatus]);
+
+  function openLocal(thread: LocalThread) {
+    setThreadId(thread.id);
+    setConversationId(thread.conversationId || null);
+    setMessages(thread.messages);
+  }
+
+  async function openServer(conversation: ServerConversation) {
+    setBusy(true);
+    try {
+      const detail =
+        conversation.messages.length > 0 ? conversation : await fetchConversation(conversation.id);
+      const next = detail?.messages?.length ? detail.messages : conversation.messages;
+      setThreadId(conversation.id);
+      setConversationId(conversation.id);
+      setMessages(next);
+      if (!next.length) {
+        setServerNote("That conversation didn’t include messages.");
+      }
+    } catch (error) {
+      setServerNote(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function newChat() {
+    setThreadId("");
+    setConversationId(null);
+    setMessages([]);
+    setInput("");
+  }
 
   async function send() {
     const text = input.trim();
     if (!text || busy) return;
+    const id = threadId || `local-${Date.now()}`;
     const next = [...messages, { role: "user" as const, content: text }];
+    setThreadId(id);
     setMessages(next);
     setInput("");
     setBusy(true);
+    let assistant = "";
     try {
       clearPreferredBase();
-      // HTTPS-first: never require or force Home VPN for Chat.
-      const { content } = await chatCompletions(next);
+      const result = await chatCompletionsStream(next, (content) => {
+        assistant = content;
+        setMessages([...next, { role: "assistant", content }]);
+      });
+      assistant = result.content || "Home replied with nothing.";
       setNeedsRepair(false);
-      setMessages([...next, { role: "assistant", content }]);
+      const stored = [
+        ...next,
+        ...(assistant ? [{ role: "assistant" as const, content: assistant }] : []),
+      ];
+      const nextConversationId = result.conversationId || conversationId;
+      setConversationId(nextConversationId);
+      setMessages(stored);
+      setThreads(
+        await saveThread({
+          id,
+          title: threadTitle(stored),
+          updatedAt: Date.now(),
+          messages: stored,
+          conversationId: nextConversationId,
+        }),
+      );
       await refreshStatus();
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      const unpaired = e instanceof NotPairedError;
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      const unpaired = error instanceof NotPairedError;
       const authFail =
         !unpaired &&
-        ((e instanceof ApiError && e.status === 401) ||
+        ((error instanceof ApiError && error.status === 401) ||
           /auth failed|unauthorized|stale pair/i.test(msg));
       if (unpaired) {
         setConnected(false);
@@ -130,19 +202,20 @@ export default function ChatScreen() {
         setNeedsRepair(true);
         setStatusLine("Connected path rejected auth — re-pair on home Wi‑Fi");
       }
-      setMessages([
-        ...next,
-        {
-          role: "assistant",
-          content: unpaired
-            ? `${msg}\n\nTap Pair with home above.`
-            : authFail
-              ? `${msg}\n\nTap Re-pair below (home Wi‑Fi), scan a fresh dashboard QR, then send again.`
-              : msg.startsWith("Couldn’t reach home")
-                ? msg
-                : `Could not reach home: ${msg}`,
-        },
-      ]);
+      const content = unpaired
+        ? `${msg}\n\nTap Pair with home above.`
+        : authFail
+          ? `${msg}\n\nTap Re-pair below (home Wi‑Fi), scan a fresh dashboard QR, then send again.`
+          : error instanceof ApiError && error.status === 400
+            ? msg
+            : msg.startsWith("Couldn’t reach home")
+              ? msg
+              : `Could not reach home: ${msg}`;
+      const stored = [...next, { role: "assistant" as const, content }];
+      setMessages(stored);
+      setThreads(
+        await saveThread({ id, title: threadTitle(stored), updatedAt: Date.now(), messages: stored }),
+      );
     } finally {
       setBusy(false);
     }
@@ -178,36 +251,48 @@ export default function ChatScreen() {
         </View>
       ) : null}
       {needsRepair ? (
-        <Pressable
-          style={styles.repairBanner}
-          onPress={() => router.push("/pair")}
-          accessibilityRole="button"
-        >
-          <Text style={styles.repairText}>
-            Re-pair on home Wi‑Fi — scan a fresh Remote Access QR
-          </Text>
+        <Pressable style={styles.repairBanner} onPress={() => router.push("/pair")} accessibilityRole="button">
+          <Text style={styles.repairText}>Re-pair on home Wi‑Fi — scan a fresh Remote Access QR</Text>
         </Pressable>
       ) : null}
       {connected ? <ModelSwitcher presentation="chip" /> : null}
+      <View style={styles.history}>
+        <Disclosure title="History">
+          <Pressable onPress={newChat} accessibilityRole="button">
+            <Text style={styles.repairAction}>New chat</Text>
+          </Pressable>
+          {threads.map((thread) => (
+            <Pressable key={thread.id} onPress={() => openLocal(thread)} accessibilityRole="button">
+              <Text style={styles.thread}>{thread.title}</Text>
+            </Pressable>
+          ))}
+          {serverNote ? <Text style={styles.serverNote}>{serverNote}</Text> : null}
+          {serverThreads.map((conversation) => (
+            <Pressable
+              key={conversation.id}
+              onPress={() => void openServer(conversation)}
+              accessibilityRole="button"
+            >
+              <Text style={styles.thread}>{conversation.title}</Text>
+            </Pressable>
+          ))}
+          {threads.length === 0 && serverThreads.length === 0 ? (
+            <Text style={styles.serverNote}>No earlier chats on this phone yet.</Text>
+          ) : null}
+        </Disclosure>
+      </View>
       <FlatList
         style={styles.list}
         data={messages}
-        keyExtractor={(_, i) => String(i)}
+        keyExtractor={(_, index) => String(index)}
         contentContainerStyle={{ padding: space.md, gap: space.sm }}
         renderItem={({ item }) => (
-          <View
-            style={[
-              styles.bubble,
-              item.role === "user" ? styles.user : styles.assistant,
-            ]}
-          >
+          <View style={[styles.bubble, item.role === "user" ? styles.user : styles.assistant]}>
             <Text style={styles.bubbleText}>{item.content}</Text>
             {(item.content.match(URL_RE) || []).map((url) => (
               <Pressable
                 key={url}
-                onPress={() =>
-                  void openCitationUrl(url).catch(() => Linking.openURL(url))
-                }
+                onPress={() => void openCitationUrl(url).catch(() => Linking.openURL(url))}
               >
                 <Text style={styles.link}>{url}</Text>
               </Pressable>
@@ -233,11 +318,7 @@ export default function ChatScreen() {
           onSubmitEditing={() => void send()}
         />
         <Pressable style={styles.send} onPress={() => void send()} disabled={busy}>
-          {busy ? (
-            <ActivityIndicator color="#fff" />
-          ) : (
-            <Text style={styles.sendText}>Send</Text>
-          )}
+          {busy ? <ActivityIndicator color="#fff" /> : <Text style={styles.sendText}>Send</Text>}
         </Pressable>
       </View>
     </View>
@@ -252,6 +333,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: space.md,
     paddingTop: space.sm,
   },
+  history: { paddingHorizontal: space.md, paddingTop: space.xs },
+  thread: { color: colors.text, paddingVertical: 6 },
+  serverNote: { color: colors.muted, lineHeight: 18, fontSize: 13 },
   repairBanner: {
     marginHorizontal: space.md,
     marginTop: space.sm,
@@ -287,18 +371,10 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     gap: 4,
   },
-  unreachableText: {
-    color: colors.text,
-    fontSize: 13,
-    lineHeight: 18,
-  },
+  unreachableText: { color: colors.text, fontSize: 13, lineHeight: 18 },
   list: { flex: 1 },
   empty: { color: colors.muted, lineHeight: 22 },
-  bubble: {
-    padding: space.md,
-    borderRadius: 14,
-    maxWidth: "92%",
-  },
+  bubble: { padding: space.md, borderRadius: 14, maxWidth: "92%" },
   user: { alignSelf: "flex-end", backgroundColor: colors.accentDim },
   assistant: { alignSelf: "flex-start", backgroundColor: colors.surface },
   bubbleText: { color: colors.text, lineHeight: 21 },

@@ -4,6 +4,7 @@ import { Stack } from "expo-router";
 import * as Network from "expo-network";
 import { StatusBar } from "expo-status-bar";
 import { colors } from "../src/lib/theme";
+import { startApprovalLive, syncApprovalPush } from "../src/lib/approvalLive";
 import { clearPreferredBase } from "../src/lib/api";
 import { ensureTunnel, isTunnelPaused } from "../src/lib/wireguard";
 import { loadSession } from "../src/lib/session";
@@ -24,7 +25,9 @@ export default function RootLayout() {
       })();
     };
     kick(false);
+    const approvals = startApprovalLive();
     const appSub = AppState.addEventListener("change", (state) => {
+      if (state === "active") void syncApprovalPush().catch(() => undefined);
       if (state === "active") kick(false);
     });
     const netSub = Network.addNetworkStateListener((event) => {
@@ -43,6 +46,7 @@ export default function RootLayout() {
       .catch(() => undefined);
     return () => {
       alive = false;
+      approvals.stop();
       appSub.remove();
       netSub.remove();
     };
