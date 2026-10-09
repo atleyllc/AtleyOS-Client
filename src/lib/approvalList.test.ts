@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { approvalDecisionBody, parseApprovals, unseenApprovalIds } from "./approvalList";
+import {
+  approvalDecisionBody,
+  decisionResultLine,
+  parseApprovals,
+  parseDecisionResult,
+  unseenApprovalIds,
+} from "./approvalList";
 
 describe("approvals", () => {
   it("reads a pending list and builds the decide body", () => {
@@ -15,6 +21,14 @@ describe("approvals", () => {
 
   it("treats a missing list as an older server", () => {
     assert.equal(parseApprovals({ ok: true }).supported, false);
+  });
+
+  it("shows whether home ran the decision", () => {
+    const ran = parseDecisionResult({ ok: true, executed: true, message: "Unlocked." });
+    assert.equal(decisionResultLine(ran, "allow"), "Home ran it. Unlocked.");
+    const skipped = parseDecisionResult({ ok: true, executed: false, message: "Already finished." });
+    assert.equal(decisionResultLine(skipped, "deny"), "Home did not run it. Already finished.");
+    assert.equal(decisionResultLine(parseDecisionResult({ ok: true }), "allow"), "Home recorded Allow.");
   });
 
   it("notifies only for ids that were not already seen", () => {

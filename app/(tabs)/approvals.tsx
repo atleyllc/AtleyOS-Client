@@ -1,7 +1,9 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Alert, ScrollView, StyleSheet, Text } from "react-native";
 import { useFocusEffect } from "expo-router";
 import { PrimaryButton, QuietButton, ScreenIntro, Section } from "../../src/components/ui";
+import { onApprovalsChanged } from "../../src/lib/approvalEvents";
+import { decisionResultLine } from "../../src/lib/approvalList";
 import {
   decideApproval,
   fetchApprovals,
@@ -15,6 +17,7 @@ export default function ApprovalsScreen() {
   const [items, setItems] = useState<ApprovalItem[]>([]);
   const [error, setError] = useState("");
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [lastDecision, setLastDecision] = useState("");
 
   const load = useCallback(async () => {
     try {
@@ -36,10 +39,13 @@ export default function ApprovalsScreen() {
     }, [load]),
   );
 
+  useEffect(() => onApprovalsChanged(() => void load()), [load]);
+
   async function decide(item: ApprovalItem, decision: "allow" | "deny") {
     setBusyId(item.id);
     try {
-      await decideApproval(item.id, decision);
+      const result = await decideApproval(item.id, decision);
+      setLastDecision(decisionResultLine(result, decision));
       setItems((current) => current.filter((row) => row.id !== item.id));
     } catch (e) {
       Alert.alert(
@@ -55,8 +61,13 @@ export default function ApprovalsScreen() {
     <ScrollView style={styles.root} contentContainerStyle={styles.content}>
       <ScreenIntro
         title="Approvals"
-        subtitle="When home needs a decision, it shows up here. A notice on this phone says something is waiting — it does not include the details."
+        subtitle="When home needs a decision, it shows up here. A notice says something is waiting. The details stay in this list."
       />
+      {lastDecision ? (
+        <Section eyebrow="Everyday" title="Last decision">
+          <Text style={styles.body}>{lastDecision}</Text>
+        </Section>
+      ) : null}
       {error ? (
         <Section eyebrow="Everyday" title="Couldn’t load">
           <Text style={styles.body}>{error}</Text>

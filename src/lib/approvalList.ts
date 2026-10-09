@@ -57,6 +57,32 @@ export function parseApprovals(body: unknown): { supported: boolean; items: Appr
   return { supported: true, items };
 }
 
+export type DecisionResult = {
+  executed: boolean | null;
+  message: string;
+};
+
+export function parseDecisionResult(body: unknown): DecisionResult {
+  const rec = record(body);
+  if (!rec) return { executed: null, message: "" };
+  return {
+    executed: typeof rec.executed === "boolean" ? rec.executed : null,
+    message: text(rec.message),
+  };
+}
+
+export function decisionResultLine(result: DecisionResult, decision: ApprovalDecision): string {
+  const lead =
+    result.executed === true
+      ? "Home ran it."
+      : result.executed === false
+        ? "Home did not run it."
+        : decision === "allow"
+          ? "Home recorded Allow."
+          : "Home recorded Deny.";
+  return result.message ? `${lead} ${result.message}` : lead;
+}
+
 export function approvalDecisionBody(
   id: string,
   decision: ApprovalDecision,

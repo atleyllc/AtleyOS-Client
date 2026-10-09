@@ -8,6 +8,8 @@ export type LocalThread = {
   title: string;
   updatedAt: number;
   messages: ThreadMessage[];
+  /** Server id from a stream chunk. The phone stores it and does not send it back. */
+  conversationId?: string | null;
 };
 
 export function threadTitle(messages: { role: string; content: string }[]): string {

@@ -6,11 +6,22 @@ describe("favorites", () => {
   it("reads favorites and sends id plus entity_id", () => {
     const parsed = parseFavorites({
       ok: true,
-      favorites: [{ id: "f1", entity_id: "light.office", label: "Office", state: "off" }],
+      favorites: [
+        {
+          id: "env_1",
+          entry_id: "env_1",
+          entity_id: "light.office",
+          label: "Office",
+          domain: "light",
+          state: "off",
+        },
+      ],
     });
     assert.equal(parsed.favorites[0].label, "Office");
+    assert.equal(parsed.favorites[0].entryId, "env_1");
+    assert.equal(parsed.favorites[0].domain, "light");
     assert.deepEqual(favoriteToggleBody(parsed.favorites[0]), {
-      id: "f1",
+      id: "env_1",
       entity_id: "light.office",
     });
   });

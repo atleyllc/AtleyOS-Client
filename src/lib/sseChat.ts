@@ -22,6 +22,20 @@ export function takeSseEvents(buffer: string): { events: string[]; rest: string 
   return { events, rest };
 }
 
+export function chatErrorCopy(code: string): string {
+  if (code === "empty_message") return "Write a message before sending.";
+  if (code === "no_conversation_assignment") {
+    return "Home has no conversation model selected. Pick one, then send again.";
+  }
+  return "";
+}
+
+export function conversationIdFromJson(json: unknown): string | null {
+  if (!json || typeof json !== "object") return null;
+  const id = (json as { conversation_id?: unknown }).conversation_id;
+  return typeof id === "string" && id.trim() ? id.trim() : null;
+}
+
 export function interpretSseData(data: string): SseDelta | null {
   const trimmed = data.trim();
   if (!trimmed) return null;
@@ -64,27 +78,52 @@ export function contentFromChatJson(json: unknown): string | null {
   return delta.text;
 }
 
+export type ChatStreamReduction = {
+  content: string;
+  streamed: boolean;
+  conversationId: string | null;
+};
+
+function rememberConversation(current: string | null, data: string): string | null {
+  const trimmed = data.trim();
+  if (!trimmed || trimmed === "[DONE]") return current;
+  try {
+    return conversationIdFromJson(JSON.parse(trimmed)) || current;
+  } catch {
+    return current;
+  }
+}
+
 /** Reduce a partial or finished stream body to the assistant text so far. */
-export function reduceChatStream(buffer: string, final: boolean): { content: string; streamed: boolean } {
+export function reduceChatStream(buffer: string, final: boolean): ChatStreamReduction {
   const { events, rest } = takeSseEvents(buffer);
   let content = "";
   let streamed = false;
+  let conversationId: string | null = null;
   for (const event of events) {
+    conversationId = rememberConversation(conversationId, event);
     const delta = interpretSseData(event);
     if (!delta || delta.kind === "done") continue;
     content = applySseDelta(content, delta);
     streamed = true;
   }
   if (!streamed && (final || rest.trim().startsWith("{"))) {
-    const candidate = (rest.trim() || buffer.trim());
+    const candidate = rest.trim() || buffer.trim();
     if (candidate.startsWith("{")) {
       try {
-        const text = contentFromChatJson(JSON.parse(candidate));
-        if (text != null) return { content: text, streamed: false };
+        const json = JSON.parse(candidate);
+        const text = contentFromChatJson(json);
+        if (text != null) {
+          return {
+            content: text,
+            streamed: false,
+            conversationId: conversationIdFromJson(json) || conversationId,
+          };
+        }
       } catch {
         /* not a single JSON body */
       }
     }
   }
-  return { content, streamed };
+  return { content, streamed, conversationId };
 }

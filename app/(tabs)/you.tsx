@@ -1,8 +1,9 @@
 import { useCallback, useState } from "react";
 import { Alert, ScrollView, StyleSheet, Text, TextInput } from "react-native";
 import { useFocusEffect } from "expo-router";
-import { PrimaryButton, QuietButton, ScreenIntro, Section } from "../../src/components/ui";
+import { Disclosure, PrimaryButton, QuietButton, ScreenIntro, Section } from "../../src/components/ui";
 import { addMemory, fetchMemory, forgetMemory, type MemoryItem } from "../../src/lib/memory";
+import { validateMemoryText, memoryErrorCopy } from "../../src/lib/memoryList";
 import {
   getSyncStatus,
   requestAllLearningPermissions,
@@ -38,8 +39,12 @@ export default function YouScreen() {
   );
 
   async function saveNote() {
+    const problem = validateMemoryText(note);
+    if (problem) {
+      Alert.alert("Couldn’t save", memoryErrorCopy(problem));
+      return;
+    }
     const text = note.trim();
-    if (!text) return;
     setBusy(true);
     try {
       await addMemory(text);
@@ -50,6 +55,12 @@ export default function YouScreen() {
     } finally {
       setBusy(false);
     }
+  }
+
+  async function syncPhone() {
+    await requestAllLearningPermissions();
+    await runObservationCycle();
+    await load();
   }
 
   async function forget(item: MemoryItem) {
@@ -88,23 +99,6 @@ export default function YouScreen() {
         </Section>
       ) : (
         <Section eyebrow="Everyday" title="Memory">
-          {items.length === 0 ? (
-            <Text style={styles.body}>Home didn’t return any memories.</Text>
-          ) : (
-            items.map((item) => (
-              <Text key={item.id} style={styles.item}>
-                {item.text}
-                {item.kind ? `\n${item.kind}` : ""}
-              </Text>
-            ))
-          )}
-          {items.map((item) => (
-            <QuietButton
-              key={`forget-${item.id}`}
-              label={`Forget “${item.text.slice(0, 42)}”`}
-              onPress={() => void forget(item)}
-            />
-          ))}
           <TextInput
             style={styles.input}
             value={note}
@@ -112,12 +106,32 @@ export default function YouScreen() {
             placeholder="Add a note home should keep"
             placeholderTextColor={colors.muted}
             editable={!busy}
+            maxLength={4000}
           />
           <PrimaryButton
-            label={busy ? "Saving…" : "Save to Memory"}
+            label={busy ? "Saving…" : "Save memory"}
             onPress={() => void saveNote()}
             disabled={busy || !note.trim()}
           />
+          <Disclosure title="Notes">
+            {items.length === 0 ? (
+              <Text style={styles.body}>Home didn’t return any memories.</Text>
+            ) : (
+              items.map((item) => (
+                <Text key={item.id} style={styles.item}>
+                  {item.text}
+                  {item.kind ? `\n${item.kind}` : ""}
+                </Text>
+              ))
+            )}
+            {items.map((item) => (
+              <QuietButton
+                key={`forget-${item.id}`}
+                label={`Forget “${item.text.slice(0, 42)}”`}
+                onPress={() => void forget(item)}
+              />
+            ))}
+          </Disclosure>
         </Section>
       )}
 
@@ -127,16 +141,11 @@ export default function YouScreen() {
           {sync?.lastSyncAt ? `\nLast sync ${new Date(sync.lastSyncAt).toLocaleString()}` : ""}
           {sync?.lastError ? `\n${sync.lastError}` : ""}
         </Text>
-        <PrimaryButton
-          label="Sync this phone"
-          onPress={() =>
-            void (async () => {
-              await requestAllLearningPermissions();
-              await runObservationCycle();
-              await load();
-            })()
-          }
-        />
+        {supported ? (
+          <QuietButton label="Sync this phone" onPress={() => void syncPhone()} />
+        ) : (
+          <PrimaryButton label="Sync this phone" onPress={() => void syncPhone()} />
+        )}
       </Section>
     </ScrollView>
   );

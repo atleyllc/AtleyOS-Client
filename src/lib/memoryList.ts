@@ -42,7 +42,7 @@ export function parseMemory(body: unknown): { supported: boolean; items: MemoryI
     const row = record(item);
     if (!row) continue;
     const id = text(row.id) || text(row.memory_id) || "";
-    const value = text(row.text) || text(row.content) || text(row.body) || text(row.fact);
+    const value = text(row.text) || text(row.content) || text(row.body);
     if (!id || !value || seen.has(id)) continue;
     seen.add(id);
     items.push({
@@ -53,4 +53,41 @@ export function parseMemory(body: unknown): { supported: boolean; items: MemoryI
     });
   }
   return { supported: true, items };
+}
+
+export const MEMORY_KINDS = [
+  "relationship",
+  "preference",
+  "correction",
+  "decision",
+  "pattern",
+  "context",
+] as const;
+
+export const MEMORY_TEXT_MAX = 4000;
+
+export function validateMemoryText(value: string): "empty_text" | "text_too_long" | null {
+  const trimmed = value.trim();
+  if (!trimmed) return "empty_text";
+  if (trimmed.length > MEMORY_TEXT_MAX) return "text_too_long";
+  return null;
+}
+
+export function memoryErrorCopy(code: string): string {
+  switch (code) {
+    case "empty_text":
+      return "Write a note before saving.";
+    case "text_too_long":
+      return "That note is longer than 4000 characters.";
+    case "invalid_kind":
+      return "Home rejected that memory kind.";
+    case "missing_id":
+      return "Home didn’t receive which note to forget.";
+    case "owner_required":
+      return "Only the Owner can change Memory.";
+    case "not_found":
+      return "Home doesn’t have that note.";
+    default:
+      return "";
+  }
 }

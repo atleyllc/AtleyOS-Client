@@ -56,7 +56,8 @@ export function parseMessages(value: unknown): ServerMessage[] {
     const content = text(rec.content) || text(rec.text) || text(rec.body);
     if (!content) continue;
     const roleRaw = text(rec.role).toLowerCase();
-    const role = roleRaw === "user" || roleRaw === "system" ? roleRaw : "assistant";
+    const role =
+      roleRaw === "user" || roleRaw === "owner" ? "user" : roleRaw === "system" ? "system" : "assistant";
     out.push({ role, content });
   }
   return out;

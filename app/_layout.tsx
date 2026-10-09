@@ -4,7 +4,7 @@ import { Stack } from "expo-router";
 import * as Network from "expo-network";
 import { StatusBar } from "expo-status-bar";
 import { colors } from "../src/lib/theme";
-import { pollApprovalsOnce } from "../src/lib/approvalWatch";
+import { startApprovalLive, syncApprovalPush } from "../src/lib/approvalLive";
 import { clearPreferredBase } from "../src/lib/api";
 import { ensureTunnel, isTunnelPaused } from "../src/lib/wireguard";
 import { loadSession } from "../src/lib/session";
@@ -25,12 +25,9 @@ export default function RootLayout() {
       })();
     };
     kick(false);
-    void pollApprovalsOnce().catch(() => undefined);
-    const approvalTimer = setInterval(() => {
-      void pollApprovalsOnce().catch(() => undefined);
-    }, 30_000);
+    const approvals = startApprovalLive();
     const appSub = AppState.addEventListener("change", (state) => {
-      if (state === "active") void pollApprovalsOnce().catch(() => undefined);
+      if (state === "active") void syncApprovalPush().catch(() => undefined);
       if (state === "active") kick(false);
     });
     const netSub = Network.addNetworkStateListener((event) => {
@@ -49,7 +46,7 @@ export default function RootLayout() {
       .catch(() => undefined);
     return () => {
       alive = false;
-      clearInterval(approvalTimer);
+      approvals.stop();
       appSub.remove();
       netSub.remove();
     };

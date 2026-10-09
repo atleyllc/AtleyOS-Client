@@ -37,6 +37,7 @@ const URL_RE = /https?:\/\/[^\s)]+/g;
 export default function ChatScreen() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [threadId, setThreadId] = useState("");
+  const [conversationId, setConversationId] = useState<string | null>(null);
   const [threads, setThreads] = useState<LocalThread[]>([]);
   const [serverThreads, setServerThreads] = useState<ServerConversation[]>([]);
   const [serverNote, setServerNote] = useState("");
@@ -120,6 +121,7 @@ export default function ChatScreen() {
 
   function openLocal(thread: LocalThread) {
     setThreadId(thread.id);
+    setConversationId(thread.conversationId || null);
     setMessages(thread.messages);
   }
 
@@ -129,7 +131,8 @@ export default function ChatScreen() {
       const detail =
         conversation.messages.length > 0 ? conversation : await fetchConversation(conversation.id);
       const next = detail?.messages?.length ? detail.messages : conversation.messages;
-      setThreadId("");
+      setThreadId(conversation.id);
+      setConversationId(conversation.id);
       setMessages(next);
       if (!next.length) {
         setServerNote("That conversation didn’t include messages.");
@@ -143,6 +146,7 @@ export default function ChatScreen() {
 
   function newChat() {
     setThreadId("");
+    setConversationId(null);
     setMessages([]);
     setInput("");
   }
@@ -169,8 +173,18 @@ export default function ChatScreen() {
         ...next,
         ...(assistant ? [{ role: "assistant" as const, content: assistant }] : []),
       ];
+      const nextConversationId = result.conversationId || conversationId;
+      setConversationId(nextConversationId);
       setMessages(stored);
-      setThreads(await saveThread({ id, title: threadTitle(stored), updatedAt: Date.now(), messages: stored }));
+      setThreads(
+        await saveThread({
+          id,
+          title: threadTitle(stored),
+          updatedAt: Date.now(),
+          messages: stored,
+          conversationId: nextConversationId,
+        }),
+      );
       await refreshStatus();
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
@@ -192,9 +206,11 @@ export default function ChatScreen() {
         ? `${msg}\n\nTap Pair with home above.`
         : authFail
           ? `${msg}\n\nTap Re-pair below (home Wi‑Fi), scan a fresh dashboard QR, then send again.`
-          : msg.startsWith("Couldn’t reach home")
+          : error instanceof ApiError && error.status === 400
             ? msg
-            : `Could not reach home: ${msg}`;
+            : msg.startsWith("Couldn’t reach home")
+              ? msg
+              : `Could not reach home: ${msg}`;
       const stored = [...next, { role: "assistant" as const, content }];
       setMessages(stored);
       setThreads(

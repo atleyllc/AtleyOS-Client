@@ -2,7 +2,7 @@
   "expo": {
     "name": "AtleyOS Client",
     "slug": "AtleyOSClient",
-    "version": "1.1.0",
+    "version": "1.1.1",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "scheme": "atleyos",
@@ -34,7 +34,7 @@
     },
     "android": {
       "package": "com.atleyos.client",
-      "versionCode": 12,
+      "versionCode": 13,
       "adaptiveIcon": {
         "backgroundColor": "#0f1419",
         "foregroundImage": "./assets/android-icon-foreground.png",

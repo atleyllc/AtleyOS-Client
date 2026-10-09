@@ -1,7 +1,9 @@
 export type Favorite = {
   id: string;
+  entryId: string | null;
   entityId: string | null;
   label: string;
+  domain: string | null;
   state: string | null;
 };
 
@@ -38,13 +40,16 @@ export function parseFavorites(body: unknown): { supported: boolean; favorites: 
     const row = record(item);
     if (!row) continue;
     const entityId = text(row.entity_id) || text(row.entityId) || null;
-    const id = text(row.id) || text(row.favorite_id) || entityId || "";
+    const entryId = text(row.entry_id) || text(row.entryId) || null;
+    const id = text(row.id) || entryId || text(row.favorite_id) || entityId || "";
     if (!id || seen.has(id)) continue;
     seen.add(id);
     favorites.push({
       id,
+      entryId,
       entityId,
       label: text(row.label) || text(row.name) || text(row.title) || entityId || id,
+      domain: text(row.domain) || null,
       state: text(row.state) || text(row.status) || null,
     });
   }

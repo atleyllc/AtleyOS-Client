@@ -3,11 +3,13 @@ import { ApiError, apiFetch } from "./api";
 import {
   approvalDecisionBody,
   parseApprovals,
+  parseDecisionResult,
   type ApprovalDecision,
   type ApprovalItem,
+  type DecisionResult,
 } from "./approvalList";
 
-export type { ApprovalDecision, ApprovalItem };
+export type { ApprovalDecision, ApprovalItem, DecisionResult };
 
 const SEEN_KEY = "atleyos.client.approvals.seen.v1";
 
@@ -25,17 +27,18 @@ export async function fetchApprovals(): Promise<{ supported: boolean; items: App
   }
 }
 
-export async function decideApproval(id: string, decision: ApprovalDecision): Promise<void> {
+export async function decideApproval(id: string, decision: ApprovalDecision): Promise<DecisionResult> {
   const body = JSON.stringify(approvalDecisionBody(id, decision));
   try {
-    await apiFetch("/api/client/approvals/decide", { method: "POST", body });
+    const result = await apiFetch<unknown>("/api/client/approvals/decide", { method: "POST", body });
+    return parseDecisionResult(result);
   } catch (error) {
     if (error instanceof ApiError && error.status === 404) {
-      await apiFetch(`/api/client/approvals/${encodeURIComponent(id)}/decide`, {
+      const result = await apiFetch<unknown>(`/api/client/approvals/${encodeURIComponent(id)}/decide`, {
         method: "POST",
         body: JSON.stringify({ decision }),
       });
-      return;
+      return parseDecisionResult(result);
     }
     throw error;
   }

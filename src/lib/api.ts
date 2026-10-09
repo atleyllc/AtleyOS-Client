@@ -6,7 +6,8 @@ import {
   unpairedFallbackBases,
 } from "./apiBases";
 import { explainUnreachable, NotPairedError, UNPAIRED_MESSAGE } from "./connectionCopy";
-import { reduceChatStream } from "./sseChat";
+import { takeApprovalEvents, type ApprovalStreamEvent } from "./approvalEvents";
+import { chatErrorCopy, reduceChatStream } from "./sseChat";
 import { sessionPatchFromStatus } from "./statusSync";
 import type { HomeApp, PairPayload, Session } from "./types";
 import { loadSession, saveSession, updateSession } from "./session";
@@ -537,26 +538,40 @@ export async function chatCompletions(
   return { content };
 }
 
-const STREAM_UNSUPPORTED = new Set([400, 404, 405, 406, 415, 501]);
+/** 400 is a real chat error (empty_message / no_conversation_assignment), not “no streaming”. */
+const STREAM_UNSUPPORTED = new Set([404, 405, 406, 415, 501]);
+
+function chatHttpError(status: number, raw: string): ApiError {
+  let code = "";
+  let message = "";
+  try {
+    const body = JSON.parse(raw) as { error?: unknown; message?: unknown };
+    if (typeof body.error === "string") code = body.error;
+    if (typeof body.message === "string") message = body.message;
+  } catch {
+    /* HTML or empty */
+  }
+  return new ApiError(chatErrorCopy(code) || message || code || `HTTP ${status}`, status, raw);
+}
 
 /**
  * Ask home to stream, then fall back to one JSON reply when this server
  * does not stream. `model: "atleyos"` lets the server use the active chat model.
+ * A 400 is returned as-is. The phone stores conversation_id and does not send it back.
  */
 export async function chatCompletionsStream(
   messages: { role: string; content: string }[],
   onDelta: (content: string) => void,
-): Promise<{ content: string; streamed: boolean }> {
+): Promise<{ content: string; streamed: boolean; conversationId: string | null }> {
   const session = await loadSession();
   if (!session) throw new NotPairedError(UNPAIRED_MESSAGE);
   try {
-    const streamed = await postChatStream(session, messages, onDelta);
-    return streamed;
+    return await postChatStream(session, messages, onDelta);
   } catch (error) {
     if (error instanceof ApiError && (error.status === 401 || STREAM_UNSUPPORTED.has(error.status))) {
       const done = await chatCompletions(messages);
       if (done.content) onDelta(done.content);
-      return { content: done.content, streamed: false };
+      return { content: done.content, streamed: false, conversationId: null };
     }
     throw error;
   }
@@ -566,45 +581,157 @@ async function postChatStream(
   session: Session,
   messages: { role: string; content: string }[],
   onDelta: (content: string) => void,
-): Promise<{ content: string; streamed: boolean }> {
+): Promise<{ content: string; streamed: boolean; conversationId: string | null }> {
   const token = session.apiToken;
   const picked = await pickReachableBase(session, token);
   if (!picked.bases.length) throw await failureFor(session, picked.probed);
   const base = picked.bases[0];
   const payload = JSON.stringify({ model: "atleyos", messages, stream: true });
-  const result = await new Promise<{ content: string; streamed: boolean; status: number; raw: string }>(
-    (resolve, reject) => {
-      const xhr = new XMLHttpRequest();
-      xhr.open("POST", `${base}/v1/chat/completions`);
-      xhr.setRequestHeader("Accept", "text/event-stream, application/json");
-      xhr.setRequestHeader("Content-Type", "application/json");
-      if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);
-      xhr.timeout = 180000;
-      const pump = (final: boolean) => {
-        const reduced = reduceChatStream(xhr.responseText || "", final);
-        if (reduced.content) onDelta(reduced.content);
-        return reduced;
-      };
-      xhr.onprogress = () => {
-        pump(false);
-      };
-      xhr.onerror = () => reject(new Error(`Couldn’t reach home at ${base}`));
-      xhr.ontimeout = () => reject(new Error(`Home at ${base} didn’t answer in time`));
-      xhr.onload = () => {
-        const reduced = pump(true);
-        resolve({ ...reduced, status: xhr.status, raw: xhr.responseText || "" });
-      };
-      xhr.send(payload);
-    },
-  );
+  const result = await new Promise<{
+    content: string;
+    streamed: boolean;
+    conversationId: string | null;
+    status: number;
+    raw: string;
+  }>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `${base}/v1/chat/completions`);
+    xhr.setRequestHeader("Accept", "text/event-stream, application/json");
+    xhr.setRequestHeader("Content-Type", "application/json");
+    if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+    xhr.timeout = 180000;
+    const pump = (final: boolean) => {
+      const reduced = reduceChatStream(xhr.responseText || "", final);
+      if (reduced.content) onDelta(reduced.content);
+      return reduced;
+    };
+    xhr.onprogress = () => {
+      pump(false);
+    };
+    xhr.onerror = () => reject(new Error(`Couldn’t reach home at ${base}`));
+    xhr.ontimeout = () => reject(new Error(`Home at ${base} didn’t answer in time`));
+    xhr.onload = () => {
+      const reduced = pump(true);
+      resolve({ ...reduced, status: xhr.status, raw: xhr.responseText || "" });
+    };
+    xhr.send(payload);
+  });
   if (result.status === 401 || STREAM_UNSUPPORTED.has(result.status)) {
     throw new ApiError(`HTTP ${result.status}`, result.status, result.raw);
   }
   if (result.status < 200 || result.status >= 300) {
-    throw new ApiError(`HTTP ${result.status}`, result.status, result.raw);
+    throw chatHttpError(result.status, result.raw);
   }
   rememberBase(base);
-  return { content: result.content, streamed: result.streamed };
+  return {
+    content: result.content,
+    streamed: result.streamed,
+    conversationId: result.conversationId,
+  };
+}
+
+/**
+ * Server-sent events while the app is open.
+ * 404/405/501 means this server has no event stream. Other closes reconnect.
+ */
+export function subscribeClientEvents(handlers: {
+  onEvent: (event: ApprovalStreamEvent) => void;
+  onUnsupported: () => void;
+  onDown?: () => void;
+}): { close: () => void } {
+  let closed = false;
+  let xhr: XMLHttpRequest | null = null;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  let attempt = 0;
+
+  const shutdown = () => {
+    closed = true;
+    if (timer) clearTimeout(timer);
+    timer = null;
+    xhr?.abort();
+    xhr = null;
+  };
+
+  const schedule = (ms: number) => {
+    if (closed) return;
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(() => {
+      void connect("/api/client/events");
+    }, ms);
+  };
+
+  const connect = async (path: "/api/client/events" | "/api/mobile/events") => {
+    if (closed) return;
+    const session = await loadSession();
+    if (!session || closed) return;
+    let base = "";
+    try {
+      const picked = await pickReachableBase(session, session.apiToken);
+      base = picked.bases[0] || "";
+    } catch {
+      base = "";
+    }
+    if (!base) {
+      attempt += 1;
+      schedule(Math.min(30_000, 2000 * attempt));
+      return;
+    }
+    if (closed) return;
+    const req = new XMLHttpRequest();
+    xhr = req;
+    let cursor = 0;
+    let rest = "";
+    const pump = () => {
+      const text = req.responseText || "";
+      if (text.length < cursor) {
+        cursor = 0;
+        rest = "";
+      }
+      const parsed = takeApprovalEvents(rest + text.slice(cursor));
+      cursor = text.length;
+      rest = parsed.rest;
+      for (const event of parsed.events) handlers.onEvent(event);
+    };
+    req.open("GET", `${base}${path}`);
+    req.setRequestHeader("Accept", "text/event-stream");
+    req.setRequestHeader("Cache-Control", "no-cache");
+    req.setRequestHeader("Authorization", `Bearer ${session.apiToken}`);
+    req.timeout = 0;
+    req.onprogress = () => pump();
+    req.onreadystatechange = () => {
+      if (req.readyState === 3 || req.readyState === 4) pump();
+    };
+    req.onload = () => {
+      if (closed || xhr !== req) return;
+      pump();
+      const status = req.status;
+      if ((status === 404 || status === 405 || status === 501) && path === "/api/client/events") {
+        void connect("/api/mobile/events");
+        return;
+      }
+      if (status === 404 || status === 405 || status === 501) {
+        handlers.onUnsupported();
+        return;
+      }
+      handlers.onDown?.();
+      if (status === 401) {
+        void refreshSession(session).finally(() => schedule(1000));
+        return;
+      }
+      attempt += 1;
+      schedule(Math.min(15_000, 1000 * attempt));
+    };
+    req.onerror = () => {
+      if (closed || xhr !== req) return;
+      handlers.onDown?.();
+      attempt += 1;
+      schedule(Math.min(15_000, 1000 * attempt));
+    };
+    req.send();
+  };
+
+  void connect("/api/client/events");
+  return { close: shutdown };
 }
 
 export async function listConversations() {

@@ -125,7 +125,7 @@ export default function HomeRailScreen() {
               label={
                 toggleId === favorite.id
                   ? "Sending…"
-                  : `${favorite.label}${favorite.state ? ` · ${favorite.state}` : ""}`
+                  : `${favorite.label}${favorite.domain ? ` · ${favorite.domain}` : ""}${favorite.state ? ` · ${favorite.state}` : ""}`
               }
               onPress={() =>
                 void (async () => {

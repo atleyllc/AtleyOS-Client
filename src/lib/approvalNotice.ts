@@ -23,9 +23,12 @@ async function ensureChannel(): Promise<void> {
   await channelReady;
 }
 
-/** Local notice only. The body is a count, never the approval text. */
-export async function notifyApprovalWaiting(count: number): Promise<void> {
-  if (count < 1) return;
+/**
+ * Local notice. Title and body match the server push.
+ * `data` is only the opaque id. Details come from GET /api/client/approvals.
+ */
+export async function notifyApprovalWaiting(id: string): Promise<void> {
+  if (!id) return;
   const current = await Notifications.getPermissionsAsync();
   let status = current.status;
   if (status !== "granted") {
@@ -36,11 +39,8 @@ export async function notifyApprovalWaiting(count: number): Promise<void> {
   await Notifications.scheduleNotificationAsync({
     content: {
       title: "AtleyOS",
-      body:
-        count === 1
-          ? "Something at home needs a decision."
-          : `${count} things at home need a decision.`,
-      data: { kind: "approval" },
+      body: "Something is waiting.",
+      data: { id },
     },
     trigger: null,
   });
