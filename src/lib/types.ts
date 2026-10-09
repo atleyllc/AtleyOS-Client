@@ -26,6 +26,11 @@ export type Session = {
   overlayApiBase: string;
   /** Away Chat over Cloudflare Tunnel / Owner HTTPS — no system VPN required. */
   httpsApiBase?: string;
+  /**
+   * False when home says Away HTTPS is not ready (tunnel down).
+   * Undefined means this phone has not been told — still try the saved URL.
+   */
+  httpsReady?: boolean;
   hostPublicKey?: string;
   pin?: string;
   overlayIp?: string;
