@@ -256,7 +256,8 @@ export async function pauseTunnel(): Promise<TunnelState> {
 
 async function clearPaused(): Promise<void> {
   try {
-    await SecureStore.deleteItemAsync(PAUSED_KEY);
+    // "0", not delete: a missing key reads as off (older installs).
+    await SecureStore.setItemAsync(PAUSED_KEY, "0");
   } catch {
     /* ignore */
   }
@@ -386,10 +387,16 @@ export async function ensureTunnel(opts: EnsureTunnelOpts = {}): Promise<TunnelS
  * Away apps on autopilot: off on home Wi‑Fi, on everywhere else.
  * Called on launch, on foreground, and when the network changes.
  */
+let lastHomeCheck = 0;
+const HOME_RECHECK_MS = 90_000;
+
 export async function syncAwayTunnel(opts: { networkChanged?: boolean } = {}): Promise<TunnelState> {
   if (await isTunnelPaused()) return getTunnelState();
   const wg = loadPatchedModule();
-  if (wg && !opts.networkChanged) {
+  // Wi‑Fi to home Wi‑Fi doesn't change the network type, so a foreground
+  // re-checks home now and then instead of trusting a connected tunnel forever.
+  const recheck = Date.now() - lastHomeCheck > HOME_RECHECK_MS;
+  if (wg && !opts.networkChanged && !recheck) {
     try {
       await ensureNativeInitialized(wg);
       const st = await wg.getStatus();
@@ -406,6 +413,7 @@ export async function syncAwayTunnel(opts: { networkChanged?: boolean } = {}): P
       /* not connected */
     }
   }
+  lastHomeCheck = Date.now();
   const { homeLanAnswers } = await import("./awayAppsClient");
   if (await homeLanAnswers()) {
     const state: TunnelState = {

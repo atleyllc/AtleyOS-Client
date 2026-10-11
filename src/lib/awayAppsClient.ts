@@ -2,6 +2,7 @@ import { ApiError, apiFetch } from "./api";
 import { hostFromApiBase } from "./homeApps";
 import { loadSession } from "./session";
 import { parseAwayApps, UNSUPPORTED, type AwayAppsStatus } from "./awayApps";
+import { makeNonce, proofMatches } from "./homeProbe";
 
 export async function loadAwayApps(): Promise<AwayAppsStatus> {
   try {
@@ -25,8 +26,12 @@ export async function checkAwayApps(): Promise<AwayAppsStatus> {
 }
 
 /**
- * True when the home server answers on its home-network address directly.
- * Call with the VPN down: with it up, that address answers away too.
+ * True when this phone's own home server answers on its home-network address.
+ * With the VPN up (or WireGuard on iPhone), that address answers away too.
+ *
+ * No token goes out: the phone sends its device id and a random nonce, and
+ * only a server holding this phone's token hash can return the right proof.
+ * Another box on the same 192.168.8.x at a hotel can't.
  */
 export async function homeLanAnswers(timeoutMs = 1500): Promise<boolean> {
   const session = await loadSession();
@@ -35,13 +40,15 @@ export async function homeLanAnswers(timeoutMs = 1500): Promise<boolean> {
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
-    const res = await fetch(`${session.lanApiBase}/api/client/status`, {
-      headers: { Accept: "application/json", Authorization: `Bearer ${session.apiToken}` },
+    const nonce = makeNonce();
+    const res = await fetch(`${session.lanApiBase}/api/client/home-probe`, {
+      method: "POST",
+      headers: { Accept: "application/json", "Content-Type": "application/json" },
+      body: JSON.stringify({ device_id: session.deviceId, nonce }),
       signal: ctrl.signal,
     });
-    // Only our own server with this phone's token says 200. Another router on
-    // the same 192.168.8.x range at a hotel won't.
-    return res.ok;
+    if (!res.ok) return false;
+    return proofMatches(await res.json(), session.apiToken, nonce);
   } catch {
     return false;
   } finally {

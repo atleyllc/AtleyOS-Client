@@ -92,11 +92,15 @@ export default function HomeRailScreen() {
     const tunnel = await getTunnelState().catch(() => null);
     const wifi = net?.type === Network.NetworkStateType.WIFI;
     setOnWifi(net ? wifi : null);
-    const up = tunnel?.status === "up";
-    setVpnUp(up);
+    let up = tunnel?.status === "up";
     setAwayEnabled(!(await isTunnelPaused()));
     // Any Wi‑Fi isn't home Wi‑Fi. Home is where the server answers directly.
-    const home = Boolean(tunnel?.atHome) || (!up && wifi && session ? await homeLanAnswers(1200) : false);
+    let home = Boolean(tunnel?.atHome) || (!up && wifi && session ? await homeLanAnswers(1200) : false);
+    if (Platform.OS === "ios" && !up && !home && session && (await homeLanAnswers(1200))) {
+      // Off Wi‑Fi and home still answers: the WireGuard app has it covered.
+      up = true;
+    }
+    setVpnUp(up);
     setAtHome(net ? home : null);
     setLinks(
       presentHomeLinks({
@@ -140,10 +144,18 @@ export default function HomeRailScreen() {
   async function openLink(link: HomeLink) {
     const url = link.lanUrl || link.openUrl;
     let up = vpnUp;
-    if (!atHome && !up && awayEnabled) {
-      // Away apps is on but asleep: wake it, then open.
-      up = (await syncAwayTunnel({ networkChanged: true }).catch(() => null))?.status === "up";
+    let home = Boolean(atHome);
+    if (!home && !up && awayEnabled && Platform.OS === "android") {
+      // Away apps is on but asleep: wake it. It may find we're home after all.
+      const st = await syncAwayTunnel({ networkChanged: true }).catch(() => null);
+      up = st?.status === "up";
+      home = Boolean(st?.atHome);
       setVpnUp(up);
+      setAtHome(home);
+    }
+    if (!home && !up && (await homeLanAnswers())) {
+      // Home answers after all: home Wi‑Fi, or WireGuard On-Demand on iPhone.
+      up = true;
     }
     const [installed, prefer] = await Promise.all([
       isAppInstalled(link.androidPackage, link.iosScheme),
@@ -151,7 +163,7 @@ export default function HomeRailScreen() {
     ]);
     const plan = planOpen({
       url,
-      atHome: Boolean(atHome),
+      atHome: home,
       vpnUp: up,
       installed,
       prefer,
