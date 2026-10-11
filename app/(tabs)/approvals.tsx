@@ -167,7 +167,7 @@ export default function InboxScreen() {
         const out = await postNotificationAction(item.id, "followup");
         router.push({
           pathname: "/chat",
-          params: { conversation: out?.conversationId || "", draft: "About the plan: ", nonce: String(Date.now()) },
+          params: { conversation: out?.conversationId || "", draft: out?.prompt || "About the plan: ", nonce: String(Date.now()) },
         });
         return;
       }
