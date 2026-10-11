@@ -1,6 +1,8 @@
 # Install and test on Atley’s Android phone
 
-Version **1.1.1** (Android `versionCode` 13). This is a native build, not Expo Go. Home VPN, photo backup, and LAN discovery need the APK.
+Version **1.1.2** (Android `versionCode` 14). This is a native build, not Expo Go. Home VPN, photo backup, and LAN discovery need the APK. It installs over 1.1.1 (`versionCode` 13).
+
+Tab icons (Chat, Home, You, Approvals, Settings) are drawn in the app. They do not use an icon font, so a missing Ionicons or Material font cannot leave empty boxes on Android or iOS.
 
 The private server repo was not readable while this was written. Away `https://atleyos.atley.llc/api/client/health` was up on 2026-10-09. Pairing and Chat still need a device token from a dashboard QR.
 
@@ -16,7 +18,7 @@ export ANDROID_HOME="$HOME/.local/android"
 npm run build:android:local
 ```
 
-The APK is `dist/AtleyOSClient-1.1.1-preview.apk`. Copy it to the phone and allow install from that source. It installs over 1.1.0 (`versionCode` 12).
+The APK is `dist/AtleyOSClient-1.1.2-preview.apk`. Copy it to the phone and allow install from that source. It installs over 1.1.1 (`versionCode` 13).
 
 EAS, if you already have a logged-in account:
 

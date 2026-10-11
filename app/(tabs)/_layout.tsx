@@ -1,10 +1,11 @@
 import { Tabs } from "expo-router";
+import { TabIcon } from "../../src/components/TabIcon";
 import { colors } from "../../src/lib/theme";
 
 export default function TabsLayout() {
   return (
     <Tabs
-      screenOptions={{
+      screenOptions={({ route }) => ({
         headerStyle: { backgroundColor: colors.bg },
         headerTintColor: colors.text,
         tabBarStyle: {
@@ -13,7 +14,10 @@ export default function TabsLayout() {
         },
         tabBarActiveTintColor: colors.accent,
         tabBarInactiveTintColor: colors.muted,
-      }}
+        tabBarIcon: ({ focused, size }) => (
+          <TabIcon route={route.name} focused={focused} size={size} />
+        ),
+      })}
     >
       <Tabs.Screen name="chat" options={{ title: "Chat" }} />
       <Tabs.Screen name="home" options={{ title: "Home" }} />
