@@ -1,7 +1,24 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Alert, Linking, ScrollView, StyleSheet, Text, TextInput } from "react-native";
+import { Alert, Linking, StyleSheet, Text, TextInput, View } from "react-native";
 import { useFocusEffect } from "expo-router";
-import { PrimaryButton, QuietButton, ScreenIntro, Section, Disclosure } from "../../src/components/ui";
+import {
+  EmptyState,
+  Group,
+  GroupLabel,
+  IconBadge,
+  ListRow,
+  MenuButton,
+  Note,
+  PrimaryButton,
+  Screen,
+  SecondaryButton,
+  Section,
+  Sheet,
+  StatusChip,
+  ui,
+  type Tone,
+} from "../../src/components/ui";
+import type { IconName } from "../../src/components/icons";
 import { onApprovalsChanged } from "../../src/lib/approvalEvents";
 import { decisionResultLine } from "../../src/lib/approvalList";
 import {
@@ -40,6 +57,7 @@ export default function InboxScreen() {
   const [lastDecision, setLastDecision] = useState("");
   const [quiet, setQuiet] = useState<QuietHours>({ enabled: false, start: "22:00", end: "07:00" });
   const quietReady = useRef(false);
+  const [quietOpen, setQuietOpen] = useState(false);
 
   const load = useCallback(async () => {
     if (!quietReady.current) {
@@ -154,115 +172,152 @@ export default function InboxScreen() {
     }
   }
 
+  const nothing = !error && supported && items.length === 0 && notices.length === 0;
+
   return (
-    <ScrollView style={styles.root} contentContainerStyle={styles.content}>
-      <ScreenIntro
-        title="Inbox"
-        subtitle="Reminders, routine results, approvals, and alerts land here. A notice stays generic. The details stay in this list."
-      />
-      <Disclosure title="Quiet hours">
-        <Text style={styles.body}>
-          During quiet hours this phone still records notices. It does not sound or show them until quiet hours end.
-        </Text>
-        <QuietButton
-          label={quiet.enabled ? "Quiet hours are on" : "Quiet hours are off"}
-          onPress={() => void saveQuiet({ ...quiet, enabled: !quiet.enabled })}
+    <Screen
+      title="Inbox"
+      right={
+        <SecondaryButton
+          label={quiet.enabled ? `Quiet ${quiet.start}–${quiet.end}` : "Quiet hours"}
+          icon="moon"
+          onPress={() => setQuietOpen(true)}
         />
-        <TextInput
-          style={styles.input}
-          value={quiet.start}
-          onChangeText={(start) => setQuiet((current) => ({ ...current, start }))}
-          onEndEditing={() => void saveQuiet(quiet)}
-          placeholder="22:00"
-          placeholderTextColor={colors.muted}
-          autoCapitalize="none"
-        />
-        <TextInput
-          style={styles.input}
-          value={quiet.end}
-          onChangeText={(end) => setQuiet((current) => ({ ...current, end }))}
-          onEndEditing={() => void saveQuiet(quiet)}
-          placeholder="07:00"
-          placeholderTextColor={colors.muted}
-          autoCapitalize="none"
-        />
-      </Disclosure>
-      {lastDecision ? (
-        <Section eyebrow="Everyday" title="Last decision">
-          <Text style={styles.body}>{lastDecision}</Text>
-        </Section>
-      ) : null}
+      }
+      onRefresh={() => void load()}
+    >
+      {lastDecision ? <Note tone="ok" icon="check">{lastDecision}</Note> : null}
       {error ? (
-        <Section eyebrow="Everyday" title="Couldn’t load">
-          <Text style={styles.body}>{error}</Text>
-          <PrimaryButton label="Try again" onPress={() => void load()} />
+        <Section>
+          <Note tone="danger">{error}</Note>
+          <SecondaryButton label="Try again" onPress={() => void load()} />
         </Section>
       ) : !supported ? (
-        <Section eyebrow="Everyday" title="Approvals">
-          <Text style={styles.body}>This home server doesn’t share approvals with the phone yet.</Text>
-        </Section>
-      ) : items.length === 0 ? (
-        <Section eyebrow="Everyday" title="Approvals">
-          <Text style={styles.body}>Nothing is waiting for you.</Text>
-        </Section>
-      ) : (
-        items.map((item) => (
-          <Section key={item.id} eyebrow="Everyday" title={item.title}>
-            {item.summary ? <Text style={styles.body}>{item.summary}</Text> : null}
-            <PrimaryButton
-              label={busyId === item.id ? "Sending…" : "Allow"}
-              onPress={() => void decide(item, "allow")}
-              disabled={busyId != null}
-            />
-            <QuietButton label="Deny" danger onPress={() => void decide(item, "deny")} />
-          </Section>
-        ))
-      )}
-      {notices.map((item) => (
-        <Section key={`${item.kind}-${item.id}`} eyebrow="Everyday" title={item.title}>
-          {item.body ? <Text style={styles.body}>{item.body}</Text> : null}
-          <Text style={styles.kind}>{labelForKind(item.kind)}</Text>
-          {item.actions.map((action) =>
-            action === "approve" || action === "open" ? (
+        <Note>This home server doesn’t share approvals with the phone yet.</Note>
+      ) : null}
+
+      {items.length ? <GroupLabel>Needs your OK</GroupLabel> : null}
+      {items.map((item) => (
+        <Section key={item.id} title={item.title} icon="shield" right={<StatusChip label="Waiting" tone="warn" />}>
+          {item.summary ? <Text style={ui.body}>{item.summary}</Text> : null}
+          <View style={styles.actions}>
+            <View style={styles.flex}>
+              <SecondaryButton label="Deny" danger onPress={() => void decide(item, "deny")} disabled={busyId != null} />
+            </View>
+            <View style={styles.flex}>
               <PrimaryButton
-                key={action}
-                label={busyId === item.id ? "Sending…" : ACTION_LABEL[action]}
-                onPress={() => void act(item, action)}
+                label="Allow"
+                busy={busyId === item.id}
+                onPress={() => void decide(item, "allow")}
                 disabled={busyId != null}
               />
-            ) : (
-              <QuietButton
-                key={action}
-                label={ACTION_LABEL[action]}
-                danger={action === "deny"}
-                onPress={() => void act(item, action)}
-              />
-            ),
-          )}
+            </View>
+          </View>
         </Section>
       ))}
-    </ScrollView>
+
+      {notices.length ? <GroupLabel>Notices</GroupLabel> : null}
+      {notices.length ? (
+        <Group>
+          {notices.map((item) => {
+            const primary = item.actions.find((a) => a === "approve" || a === "open");
+            const rest = item.actions.filter((a) => a !== primary);
+            return (
+              <ListRow
+                key={`${item.kind}-${item.id}`}
+                icon={kindIcon(item.kind)}
+                tone={kindTone(item.kind)}
+                title={item.title}
+                subtitle={[labelForKind(item.kind), item.body].filter(Boolean).join(" · ")}
+                onPress={primary ? () => void act(item, primary) : undefined}
+                right={
+                  <MenuButton
+                    title={item.title}
+                    actions={rest.map((action) => ({
+                      label: ACTION_LABEL[action],
+                      danger: action === "deny",
+                      icon: action === "dismiss" ? "close" : action === "snooze" ? "clock" : action === "deny" ? "close" : "check",
+                      onPress: () => void act(item, action),
+                    }))}
+                  />
+                }
+              />
+            );
+          })}
+        </Group>
+      ) : null}
+
+      {nothing ? (
+        <EmptyState icon="inbox" title="You’re all caught up" body="Approvals, reminders, and alerts from home show up here." />
+      ) : null}
+
+      <Sheet visible={quietOpen} onClose={() => setQuietOpen(false)} title="Quiet hours">
+        <Text style={ui.body}>
+          During quiet hours this phone still records notices. It doesn’t sound or show them until quiet hours end.
+        </Text>
+        <Group>
+          <ListRow
+            icon="moon"
+            title="Quiet hours"
+            right={<StatusChip label={quiet.enabled ? "On" : "Off"} tone={quiet.enabled ? "accent" : "muted"} />}
+            onPress={() => void saveQuiet({ ...quiet, enabled: !quiet.enabled })}
+          />
+        </Group>
+        <View style={styles.actions}>
+          <View style={styles.flex}>
+            <Text style={styles.fieldLabel}>From</Text>
+            <TextInput
+              style={ui.input}
+              value={quiet.start}
+              onChangeText={(start) => setQuiet((current) => ({ ...current, start }))}
+              onEndEditing={() => void saveQuiet(quiet)}
+              placeholder="22:00"
+              placeholderTextColor={colors.faint}
+              autoCapitalize="none"
+            />
+          </View>
+          <View style={styles.flex}>
+            <Text style={styles.fieldLabel}>Until</Text>
+            <TextInput
+              style={ui.input}
+              value={quiet.end}
+              onChangeText={(end) => setQuiet((current) => ({ ...current, end }))}
+              onEndEditing={() => void saveQuiet(quiet)}
+              placeholder="07:00"
+              placeholderTextColor={colors.faint}
+              autoCapitalize="none"
+            />
+          </View>
+        </View>
+      </Sheet>
+    </Screen>
   );
 }
 
 function labelForKind(kind: InboxItem["kind"]): string {
-  if (kind === "storage_alert") return "Storage alert. Dismiss is the only action on the phone.";
+  if (kind === "storage_alert") return "Storage";
   if (kind === "reminder") return "Reminder";
   if (kind === "routine") return "Routine";
   if (kind === "approval") return "Approval";
   return "Alert";
 }
 
+function kindIcon(kind: InboxItem["kind"]): IconName {
+  if (kind === "storage_alert") return "storage";
+  if (kind === "reminder") return "reminders";
+  if (kind === "routine") return "clock";
+  if (kind === "approval") return "shield";
+  return "alert";
+}
+
+function kindTone(kind: InboxItem["kind"]): Tone {
+  if (kind === "storage_alert") return "danger";
+  if (kind === "approval") return "warn";
+  return "accent";
+}
+
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: colors.bg },
-  content: { padding: space.md, gap: space.md, paddingBottom: space.xl },
-  body: { color: colors.muted, lineHeight: 21 },
-  kind: { color: colors.accent, fontSize: 12, fontWeight: "700" },
-  input: {
-    backgroundColor: colors.surface,
-    borderRadius: 12,
-    paddingHorizontal: space.md,
-    paddingVertical: 12,
-    color: colors.text,
-  },
+  actions: { flexDirection: "row", gap: space.sm },
+  flex: { flex: 1, gap: space.xxs },
+  fieldLabel: { color: colors.muted, fontSize: 12, fontWeight: "600" },
 });

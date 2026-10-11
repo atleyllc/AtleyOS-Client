@@ -58,3 +58,15 @@ Leave home Wi‑Fi (cellular). Home VPN stays off.
 ## Unpaired
 
 Settings → Re-pair clears the session. Chat should say this phone isn’t paired and open pairing. It should not call `http://127.0.0.1:8765`.
+
+## Layout (1.2.1)
+
+Each tab has one title and no navigator header. Cards are grouped with icons, status is a short chip (Up, Down, Waiting), and secondary actions such as addresses sit behind the ⋯ menu on each card.
+
+- **Chat**: connection pill (Home Wi‑Fi, Away, Home VPN, Offline), model chip, history sheet, empty state with suggestions, bubbles, and a composer that stays above the keyboard.
+- **Home**: a grid of home apps (one tap opens), then Tools: Machines, Coding jobs, AI usage, Connectors, Storage, Search, Reminders. A tool only shows when the server has its route.
+- **You**: the phone sync row says how many items are waiting and why, shows progress while uploading, and drains the queue 100 at a time. The queue is de‑duplicated, so collecting again no longer grows it.
+- **Inbox**: approvals with Allow and Deny, notices with a ⋯ menu, quiet hours in a sheet.
+- **Machines**, **Coding jobs**, **AI usage**: read from `/api/client/machines`, `/api/client/coding`, and `/api/client/ai-usage`. Machine approvals can be decided here or in Inbox.
+
+All glyphs are bundled PNGs from Lucide (ISC, `assets/icons/LICENSE-lucide.txt`) with @2x and @3x copies. No icon font is used.

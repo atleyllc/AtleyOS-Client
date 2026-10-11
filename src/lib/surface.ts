@@ -4,7 +4,10 @@
  * 400 means the route exists and rejected the input.
  */
 import { ApiError, apiFetch } from "./api";
+import { parseCoding, type CodingSnapshot } from "./coding";
 import { parseConnectors, type ConnectorRow } from "./connectors";
+import { parseMachines, type MachinesSnapshot } from "./machines";
+import { parseUsage, type UsageSnapshot } from "./aiUsage";
 import { parseInbox, parseQuietHours, type InboxItem, type QuietHours } from "./inbox";
 import { parseReminders, parseRoutines, type ReminderRow, type RoutineRow } from "./reminders";
 import { parseSearch, type SearchSnapshot } from "./searchParse";
@@ -47,21 +50,30 @@ export type SurfaceFlags = {
   search: boolean;
   connectors: boolean;
   reminders: boolean;
+  machines: boolean;
+  coding: boolean;
+  usage: boolean;
 };
 
 export async function probeSurfaces(): Promise<SurfaceFlags> {
-  const [storage, search, connectors, reminders, routines] = await Promise.all([
+  const [storage, search, connectors, reminders, routines, machines, coding, usage] = await Promise.all([
     readRoute("/api/client/storage"),
     readRoute("/api/client/search?q="),
     readRoute("/api/client/connectors"),
     readRoute("/api/client/reminders"),
     readRoute("/api/client/routines"),
+    readRoute("/api/client/machines"),
+    readRoute("/api/client/coding"),
+    readRoute("/api/client/ai-usage"),
   ]);
   return {
     storage: routeExists(storage.state),
     search: routeExists(search.state),
     connectors: routeExists(connectors.state),
     reminders: routeExists(reminders.state) || routeExists(routines.state),
+    machines: routeExists(machines.state),
+    coding: routeExists(coding.state),
+    usage: routeExists(usage.state),
   };
 }
 
@@ -144,4 +156,33 @@ export async function saveServerQuietHours(quiet: QuietHours): Promise<boolean> 
     if (routeMissing(error)) return false;
     throw error;
   }
+}
+
+export async function loadMachines(): Promise<{ supported: boolean; snapshot: MachinesSnapshot; error: string }> {
+  const res = await readRoute("/api/client/machines");
+  if (!routeExists(res.state)) return { supported: false, snapshot: parseMachines(null), error: res.error };
+  return { supported: true, snapshot: parseMachines(res.body), error: res.error };
+}
+
+export async function decideMachineJob(id: string, allow: boolean): Promise<void> {
+  await apiFetch(`/api/client/machines/jobs/${encodeURIComponent(id)}/${allow ? "approve" : "deny"}`, {
+    method: "POST",
+    body: "{}",
+  });
+}
+
+export async function loadCoding(): Promise<{ supported: boolean; snapshot: CodingSnapshot; error: string }> {
+  const res = await readRoute("/api/client/coding");
+  if (!routeExists(res.state)) return { supported: false, snapshot: parseCoding(null), error: res.error };
+  return { supported: true, snapshot: parseCoding(res.body), error: res.error };
+}
+
+export async function cancelCodingJob(id: string): Promise<void> {
+  await apiFetch(`/api/client/coding/jobs/${encodeURIComponent(id)}/cancel`, { method: "POST", body: "{}" });
+}
+
+export async function loadUsage(refresh = false): Promise<{ supported: boolean; snapshot: UsageSnapshot; error: string }> {
+  const res = await readRoute(`/api/client/ai-usage${refresh ? "?refresh=1" : ""}`);
+  if (!routeExists(res.state)) return { supported: false, snapshot: parseUsage(null), error: res.error };
+  return { supported: true, snapshot: parseUsage(res.body), error: res.error };
 }

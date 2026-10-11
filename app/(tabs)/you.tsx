@@ -1,7 +1,21 @@
 import { useCallback, useState } from "react";
-import { Alert, ScrollView, StyleSheet, Text, TextInput } from "react-native";
+import { Alert, StyleSheet, Text, TextInput, View } from "react-native";
 import { useFocusEffect } from "expo-router";
-import { Disclosure, PrimaryButton, QuietButton, ScreenIntro, Section } from "../../src/components/ui";
+import {
+  Group,
+  GroupLabel,
+  IconBadge,
+  ListRow,
+  MenuButton,
+  Note,
+  PrimaryButton,
+  ProgressBar,
+  Screen,
+  SecondaryButton,
+  Section,
+  StatusChip,
+  ui,
+} from "../../src/components/ui";
 import { addMemory, fetchMemory, forgetMemory, type MemoryItem } from "../../src/lib/memory";
 import { validateMemoryText, memoryErrorCopy } from "../../src/lib/memoryList";
 import {
@@ -9,8 +23,16 @@ import {
   requestAllLearningPermissions,
   runObservationCycle,
 } from "../../src/lib/observation";
+import { syncCopy } from "../../src/lib/syncCopy";
 import type { SyncStatus } from "../../src/lib/types";
 import { colors, space } from "../../src/lib/theme";
+
+const SOURCE_LABEL: Record<string, string> = {
+  contacts: "Contacts",
+  calendar: "Calendar",
+  location: "Places",
+  photos_metadata: "Photo details",
+};
 
 export default function YouScreen() {
   const [supported, setSupported] = useState<boolean | null>(null);
@@ -19,6 +41,9 @@ export default function YouScreen() {
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [sync, setSync] = useState<SyncStatus | null>(null);
+  const [syncing, setSyncing] = useState(false);
+  const [startPending, setStartPending] = useState<number | null>(null);
+  const [showAll, setShowAll] = useState(false);
 
   const load = useCallback(async () => {
     setSync(await getSyncStatus());
@@ -58,9 +83,20 @@ export default function YouScreen() {
   }
 
   async function syncPhone() {
-    await requestAllLearningPermissions();
-    await runObservationCycle();
-    await load();
+    setSyncing(true);
+    try {
+      await requestAllLearningPermissions();
+      await runObservationCycle({
+        onProgress: (pending, start) => {
+          setStartPending(start);
+          setSync((current) => ({ ...(current || { sources: {} }), pending }));
+        },
+      });
+      await load();
+    } finally {
+      setSyncing(false);
+      setStartPending(null);
+    }
   }
 
   async function forget(item: MemoryItem) {
@@ -75,98 +111,113 @@ export default function YouScreen() {
     }
   }
 
+  const copy = syncCopy(sync, { syncing, startPending });
+  const sources = Object.entries(sync?.sources || {}).filter(([key]) => SOURCE_LABEL[key]);
+  const shown = showAll ? items : items.slice(0, 5);
+
   return (
-    <ScrollView style={styles.root} contentContainerStyle={styles.content}>
-      <ScreenIntro
-        title="You"
-        subtitle="What AtleyOS knows stays on your home server. This phone shows it only when home has a memory route."
-      />
-      {error ? (
-        <Section eyebrow="Everyday" title="Couldn’t load">
-          <Text style={styles.body}>{error}</Text>
-          <PrimaryButton label="Try again" onPress={() => void load()} />
-        </Section>
-      ) : supported == null ? (
-        <Section eyebrow="Everyday" title="Memory">
-          <Text style={styles.body}>Checking what home will share…</Text>
-        </Section>
-      ) : supported === false ? (
-        <Section eyebrow="Everyday" title="Memory">
-          <Text style={styles.body}>
-            This home server doesn’t let the phone read or change Memory yet. Nothing on this screen is made up.
-            Home would need GET /api/client/memory, POST /api/client/memory, and POST /api/client/memory/forget.
-          </Text>
-        </Section>
-      ) : (
-        <Section eyebrow="Everyday" title="Memory">
-          <TextInput
-            style={styles.input}
-            value={note}
-            onChangeText={setNote}
-            placeholder="Add a note home should keep"
-            placeholderTextColor={colors.muted}
-            editable={!busy}
-            maxLength={4000}
-          />
-          <PrimaryButton
-            label={busy ? "Saving…" : "Save memory"}
-            onPress={() => void saveNote()}
-            disabled={busy || !note.trim()}
-          />
-          <Disclosure title="Notes">
-            {items.length === 0 ? (
-              <Text style={styles.body}>Home didn’t return any memories.</Text>
-            ) : (
-              items.map((item) => (
-                <Text key={item.id} style={styles.item}>
-                  {item.text}
-                  {item.kind ? `\n${item.kind}` : ""}
-                </Text>
-              ))
-            )}
-            {items.map((item) => (
-              <QuietButton
-                key={`forget-${item.id}`}
-                label={`Forget “${item.text.slice(0, 42)}”`}
-                onPress={() => void forget(item)}
+    <Screen title="You" subtitle="What AtleyOS knows about you. It stays on your home server." onRefresh={() => void load()}>
+      <Section
+        title="From this phone"
+        icon="sync"
+        right={<StatusChip label={copy.chip} tone={copy.tone} />}
+      >
+        <Text style={styles.headline}>{copy.headline}</Text>
+        {copy.progress != null ? <ProgressBar value={copy.progress} /> : null}
+        <Text style={ui.body}>{copy.detail}</Text>
+        {sources.length ? (
+          <View style={styles.sources}>
+            {sources.map(([key, value]) => (
+              <StatusChip
+                key={key}
+                dot={false}
+                tone={value.granted ? "muted" : "warn"}
+                label={value.granted ? `${SOURCE_LABEL[key]} ${value.lastCount ?? 0}` : `${SOURCE_LABEL[key]} off`}
               />
             ))}
-          </Disclosure>
-        </Section>
-      )}
-
-      <Section eyebrow="Everyday" title="From this phone">
-        <Text style={styles.body}>
-          Pending {sync?.pending ?? 0}
-          {sync?.lastSyncAt ? `\nLast sync ${new Date(sync.lastSyncAt).toLocaleString()}` : ""}
-          {sync?.lastError ? `\n${sync.lastError}` : ""}
-        </Text>
-        {supported ? (
-          <QuietButton label="Sync this phone" onPress={() => void syncPhone()} />
-        ) : (
-          <PrimaryButton label="Sync this phone" onPress={() => void syncPhone()} />
-        )}
+          </View>
+        ) : null}
+        <SecondaryButton
+          label={syncing ? "Syncing…" : "Sync now"}
+          icon="sync"
+          onPress={() => void syncPhone()}
+          disabled={syncing}
+        />
       </Section>
-    </ScrollView>
+
+      <GroupLabel>Memory</GroupLabel>
+      {error ? (
+        <Section>
+          <Note tone="danger">{error}</Note>
+          <SecondaryButton label="Try again" onPress={() => void load()} />
+        </Section>
+      ) : supported == null ? (
+        <Section>
+          <Text style={ui.body}>Checking what home will share…</Text>
+        </Section>
+      ) : supported === false ? (
+        <Section>
+          <Note>This home server doesn’t share Memory with the phone yet.</Note>
+        </Section>
+      ) : (
+        <>
+          <Section>
+            <TextInput
+              style={ui.input}
+              value={note}
+              onChangeText={setNote}
+              placeholder="Something AtleyOS should remember"
+              placeholderTextColor={colors.faint}
+              editable={!busy}
+              maxLength={4000}
+              multiline
+            />
+            <PrimaryButton
+              label={busy ? "Saving…" : "Remember this"}
+              onPress={() => void saveNote()}
+              disabled={busy || !note.trim()}
+            />
+          </Section>
+          {items.length === 0 ? (
+            <Section>
+              <View style={styles.emptyMemory}>
+                <IconBadge name="memory" tone="muted" />
+                <Text style={ui.body}>Nothing saved yet.</Text>
+              </View>
+            </Section>
+          ) : (
+            <Group>
+              {shown.map((item) => (
+                <ListRow
+                  key={item.id}
+                  icon="memory"
+                  tone="muted"
+                  title={item.text}
+                  subtitle={item.kind || undefined}
+                  right={
+                    <MenuButton
+                      title="Memory"
+                      actions={[{ label: "Forget", icon: "trash", danger: true, onPress: () => void forget(item) }]}
+                    />
+                  }
+                />
+              ))}
+              {items.length > 5 ? (
+                <ListRow
+                  title={showAll ? "Show fewer" : `Show all ${items.length}`}
+                  onPress={() => setShowAll((v) => !v)}
+                />
+              ) : null}
+            </Group>
+          )}
+        </>
+      )}
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: colors.bg },
-  content: { padding: space.md, gap: space.md, paddingBottom: space.xl },
-  body: { color: colors.muted, lineHeight: 21 },
-  item: {
-    color: colors.text,
-    lineHeight: 21,
-    backgroundColor: colors.surface,
-    padding: space.sm,
-    borderRadius: 10,
-  },
-  input: {
-    backgroundColor: colors.surface,
-    borderRadius: 12,
-    paddingHorizontal: space.md,
-    paddingVertical: 12,
-    color: colors.text,
-  },
+  headline: { color: colors.text, fontSize: 18, fontWeight: "700" },
+  sources: { flexDirection: "row", flexWrap: "wrap", gap: space.xs },
+  emptyMemory: { flexDirection: "row", alignItems: "center", gap: space.sm },
 });

@@ -6,6 +6,7 @@ import * as Device from "expo-device";
 import { Platform } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { ingestObservation, ingestProfileContinuity } from "./api";
+import { mergeQueue } from "./obsQueue";
 import { loadSession } from "./session";
 import type { SyncStatus } from "./types";
 
@@ -208,7 +209,7 @@ export async function collectAndEnqueue(): Promise<number> {
   ]);
   const items = [...deviceContext(), ...batches.flat()];
   const queue = await loadQueue();
-  const merged = [...queue, ...items];
+  const merged = mergeQueue(queue, items);
   await saveQueue(merged);
   const status = await getSyncStatus();
   status.pending = merged.length;
@@ -259,8 +260,22 @@ export async function flushQueue(): Promise<{ accepted: number; error?: string }
   }
 }
 
-export async function runObservationCycle(): Promise<SyncStatus> {
+/**
+ * Collect, then upload until the queue is empty, an upload fails, or
+ * maxPasses batches have gone. onProgress gets the pending count after each.
+ */
+export async function runObservationCycle(
+  opts: { maxPasses?: number; onProgress?: (pending: number, startPending: number) => void } = {},
+): Promise<SyncStatus> {
   await collectAndEnqueue();
-  await flushQueue();
+  const start = (await getSyncStatus()).pending;
+  opts.onProgress?.(start, start);
+  const maxPasses = opts.maxPasses ?? 25;
+  for (let pass = 0; pass < maxPasses; pass += 1) {
+    const out = await flushQueue();
+    const status = await getSyncStatus();
+    opts.onProgress?.(status.pending, start);
+    if (out.error || out.accepted === 0 || status.pending === 0) break;
+  }
   return getSyncStatus();
 }
