@@ -2,7 +2,7 @@ import { useCallback, useState } from "react";
 import { Alert, Linking, Platform, ScrollView, StyleSheet, Text } from "react-native";
 import * as Clipboard from "expo-clipboard";
 import * as Network from "expo-network";
-import { useFocusEffect } from "expo-router";
+import { router, useFocusEffect } from "expo-router";
 import { fetchFavorites, toggleFavorite, type Favorite } from "../../src/lib/favorites";
 import { loadHomeApps } from "../../src/lib/homeOpeners";
 import {
@@ -10,13 +10,25 @@ import {
   presentHomeLinks,
   type HomeLink,
 } from "../../src/lib/homeApps";
+import {
+  BITWARDEN_SCHEME,
+  choosePasswordOpen,
+  passwordRowFromApps,
+  storeUrlForPlatform,
+  type PasswordRow,
+} from "../../src/lib/passwords";
 import { loadSession } from "../../src/lib/session";
+import { probeSurfaces, type SurfaceFlags } from "../../src/lib/surface";
 import { getTunnelState } from "../../src/lib/wireguard";
 import { Disclosure, PrimaryButton, QuietButton, ScreenIntro, Section } from "../../src/components/ui";
 import { colors, space } from "../../src/lib/theme";
 
+const EMPTY_FLAGS: SurfaceFlags = { storage: false, search: false, connectors: false, reminders: false };
+
 export default function HomeRailScreen() {
   const [links, setLinks] = useState<HomeLink[]>([]);
+  const [passwords, setPasswords] = useState<PasswordRow | null>(null);
+  const [surfaces, setSurfaces] = useState<SurfaceFlags>(EMPTY_FLAGS);
   const [favorites, setFavorites] = useState<Favorite[]>([]);
   const [favoritesSupported, setFavoritesSupported] = useState(false);
   const [note, setNote] = useState("");
@@ -41,17 +53,19 @@ export default function HomeRailScreen() {
       homeVpnUp: tunnel?.status === "up" && tunnel.mode === "overlay",
     });
     setLinks(next);
+    setPasswords(passwordRowFromApps(apps));
     setNote(warning);
-    if (session) {
-      try {
-        const fav = await fetchFavorites();
-        setFavoritesSupported(fav.supported);
-        setFavorites(fav.favorites);
-      } catch {
-        setFavoritesSupported(false);
-        setFavorites([]);
-      }
+    if (!session) {
+      setSurfaces(EMPTY_FLAGS);
+      return;
     }
+    const [surfaceFlags, fav] = await Promise.all([
+      probeSurfaces().catch(() => EMPTY_FLAGS),
+      fetchFavorites().catch(() => null),
+    ]);
+    setSurfaces(surfaceFlags);
+    setFavoritesSupported(Boolean(fav?.supported));
+    setFavorites(fav?.favorites || []);
   }, []);
 
   useFocusEffect(
@@ -69,6 +83,23 @@ export default function HomeRailScreen() {
       await Linking.openURL(link.openUrl);
     } catch (e) {
       Alert.alert(link.title, e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  async function openPasswords() {
+    if (!passwords?.present) return;
+    let nativeInstalled = false;
+    try {
+      nativeInstalled = await Linking.canOpenURL(BITWARDEN_SCHEME);
+    } catch {
+      nativeInstalled = false;
+    }
+    const choice = choosePasswordOpen({ serverUrl: passwords.serverUrl, nativeInstalled });
+    const url = choice.url || storeUrlForPlatform(Platform.OS);
+    try {
+      await Linking.openURL(url);
+    } catch (e) {
+      Alert.alert("Passwords", e instanceof Error ? e.message : String(e));
     }
   }
 
@@ -112,6 +143,32 @@ export default function HomeRailScreen() {
           </Disclosure>
         </Section>
       ))}
+      {passwords?.present ? (
+        <Section eyebrow="Everyday" title={passwords.title || "Passwords"}>
+          <Text style={styles.body}>
+            Opens Bitwarden when it is installed. Otherwise it opens the server URL. LAN and Home VPN addresses are not used.
+          </Text>
+          <PrimaryButton label="Open Passwords" onPress={() => void openPasswords()} />
+          <QuietButton
+            label="Install Bitwarden"
+            onPress={() => void Linking.openURL(storeUrlForPlatform(Platform.OS))}
+          />
+          {passwords.serverUrl ? (
+            <QuietButton
+              label="Copy server URL"
+              onPress={() => void Clipboard.setStringAsync(passwords.serverUrl)}
+            />
+          ) : null}
+        </Section>
+      ) : null}
+      {surfaces.storage || surfaces.search || surfaces.connectors || surfaces.reminders ? (
+        <Section eyebrow="Everyday" title="On this phone">
+          {surfaces.storage ? <QuietButton label="Storage" onPress={() => router.push("/storage")} /> : null}
+          {surfaces.search ? <QuietButton label="Search" onPress={() => router.push("/search")} /> : null}
+          {surfaces.connectors ? <QuietButton label="Connectors" onPress={() => router.push("/connectors")} /> : null}
+          {surfaces.reminders ? <QuietButton label="Reminders and routines" onPress={() => router.push("/reminders")} /> : null}
+        </Section>
+      ) : null}
       {favoritesSupported ? (
         <Section eyebrow="Everyday" title="Favorites">
           <Text style={styles.body}>

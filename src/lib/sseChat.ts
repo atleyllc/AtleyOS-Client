@@ -1,5 +1,8 @@
 /** OpenAI-style chat stream parsing. Transport stays in the API client. */
 
+import { absorbStreamJson, emptyStreamCarry, extrasFromCarry, type ToolCallView } from "./chatTools";
+import type { SearchHit } from "./searchParse";
+
 export type SseDelta =
   | { kind: "append"; text: string }
   | { kind: "replace"; text: string }
@@ -82,6 +85,9 @@ export type ChatStreamReduction = {
   content: string;
   streamed: boolean;
   conversationId: string | null;
+  toolCalls: ToolCallView[];
+  citations: SearchHit[];
+  embeddingRoute: string;
 };
 
 function rememberConversation(current: string | null, data: string): string | null {
@@ -94,30 +100,48 @@ function rememberConversation(current: string | null, data: string): string | nu
   }
 }
 
-/** Reduce a partial or finished stream body to the assistant text so far. */
+function jsonFromEvent(data: string): unknown | null {
+  const trimmed = data.trim();
+  if (!trimmed || trimmed === "[DONE]") return null;
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    return null;
+  }
+}
+
+/** Reduce a partial or finished stream body to the assistant text and extras so far. */
 export function reduceChatStream(buffer: string, final: boolean): ChatStreamReduction {
   const { events, rest } = takeSseEvents(buffer);
   let content = "";
   let streamed = false;
   let conversationId: string | null = null;
+  let carry = emptyStreamCarry();
   for (const event of events) {
     conversationId = rememberConversation(conversationId, event);
+    const json = jsonFromEvent(event);
+    if (json) carry = absorbStreamJson(carry, json);
     const delta = interpretSseData(event);
     if (!delta || delta.kind === "done") continue;
     content = applySseDelta(content, delta);
     streamed = true;
   }
+  const extras = extrasFromCarry(carry);
   if (!streamed && (final || rest.trim().startsWith("{"))) {
     const candidate = rest.trim() || buffer.trim();
     if (candidate.startsWith("{")) {
       try {
-        const json = JSON.parse(candidate);
+        const json = JSON.parse(candidate) as unknown;
         const text = contentFromChatJson(json);
-        if (text != null) {
+        const full = extrasFromCarry(absorbStreamJson(carry, json));
+        if (text != null || full.toolCalls.length > 0 || full.citations.length > 0) {
           return {
-            content: text,
+            content: text ?? content,
             streamed: false,
             conversationId: conversationIdFromJson(json) || conversationId,
+            toolCalls: full.toolCalls,
+            citations: full.citations,
+            embeddingRoute: full.embeddingRoute,
           };
         }
       } catch {
@@ -125,5 +149,5 @@ export function reduceChatStream(buffer: string, final: boolean): ChatStreamRedu
       }
     }
   }
-  return { content, streamed, conversationId };
+  return { content, streamed, conversationId, ...extras };
 }

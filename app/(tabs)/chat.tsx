@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   FlatList,
-  Linking,
   Pressable,
   StyleSheet,
   Text,
@@ -20,19 +20,19 @@ import {
   clientStatus,
   probeReachability,
 } from "../../src/lib/api";
+import { ChatMessageBody } from "../../src/components/ChatMessageBody";
 import { ModelSwitcher } from "../../src/components/ModelSwitcher";
 import { Disclosure } from "../../src/components/ui";
+import { onApprovalsChanged } from "../../src/lib/approvalEvents";
+import { decideApproval, fetchApprovals } from "../../src/lib/approvals";
 import { saveThread, loadThreads } from "../../src/lib/chatHistory";
 import { threadTitle, type LocalThread } from "../../src/lib/chatThreads";
 import { fetchConversation, fetchConversations } from "../../src/lib/conversations";
 import type { ServerConversation } from "../../src/lib/conversationParse";
-import { openCitationUrl } from "../../src/lib/homeOpeners";
 import { runObservationCycle } from "../../src/lib/observation";
 import { loadSession } from "../../src/lib/session";
 import type { ChatMessage } from "../../src/lib/types";
 import { colors, space } from "../../src/lib/theme";
-
-const URL_RE = /https?:\/\/[^\s)]+/g;
 
 export default function ChatScreen() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -46,6 +46,7 @@ export default function ChatScreen() {
   const [statusLine, setStatusLine] = useState("Checking home…");
   const [needsRepair, setNeedsRepair] = useState(false);
   const [connected, setConnected] = useState(false);
+  const [pendingApprovalIds, setPendingApprovalIds] = useState<string[]>([]);
   const [banner, setBanner] = useState<
     | { kind: "unpaired"; message: string }
     | { kind: "unreachable"; message: string; suggestPair: boolean }
@@ -109,6 +110,19 @@ export default function ChatScreen() {
   }, []);
 
   useEffect(() => {
+    const loadPending = async () => {
+      try {
+        const next = await fetchApprovals();
+        setPendingApprovalIds(next.supported ? next.items.map((item) => item.id) : []);
+      } catch {
+        setPendingApprovalIds([]);
+      }
+    };
+    void loadPending();
+    return onApprovalsChanged(() => void loadPending());
+  }, []);
+
+  useEffect(() => {
     void refreshStatus();
     void refreshHistory();
     void runObservationCycle().catch(() => undefined);
@@ -161,17 +175,31 @@ export default function ChatScreen() {
     setInput("");
     setBusy(true);
     let assistant = "";
+    let extras: Pick<ChatMessage, "toolCalls" | "citations" | "embeddingRoute"> = {};
     try {
       clearPreferredBase();
-      const result = await chatCompletionsStream(next, (content) => {
+      const result = await chatCompletionsStream(next, (content, live) => {
         assistant = content;
-        setMessages([...next, { role: "assistant", content }]);
+        extras = {
+          toolCalls: live.toolCalls,
+          citations: live.citations,
+          embeddingRoute: live.embeddingRoute,
+        };
+        setMessages([...next, { role: "assistant", content, ...extras }]);
       });
-      assistant = result.content || "Home replied with nothing.";
+      assistant = result.content;
+      extras = {
+        toolCalls: result.toolCalls,
+        citations: result.citations,
+        embeddingRoute: result.embeddingRoute,
+      };
+      if (!assistant && !result.toolCalls.length && !result.citations.length) {
+        assistant = "Home replied with nothing.";
+      }
       setNeedsRepair(false);
       const stored = [
         ...next,
-        ...(assistant ? [{ role: "assistant" as const, content: assistant }] : []),
+        { role: "assistant" as const, content: assistant, ...extras },
       ];
       const nextConversationId = result.conversationId || conversationId;
       setConversationId(nextConversationId);
@@ -218,6 +246,15 @@ export default function ChatScreen() {
       );
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function decideInline(id: string, decision: "allow" | "deny") {
+    try {
+      await decideApproval(id, decision);
+      setPendingApprovalIds((current) => current.filter((item) => item !== id));
+    } catch (error) {
+      Alert.alert("Couldn’t record that", error instanceof Error ? error.message : String(error));
     }
   }
 
@@ -288,15 +325,11 @@ export default function ChatScreen() {
         contentContainerStyle={{ padding: space.md, gap: space.sm }}
         renderItem={({ item }) => (
           <View style={[styles.bubble, item.role === "user" ? styles.user : styles.assistant]}>
-            <Text style={styles.bubbleText}>{item.content}</Text>
-            {(item.content.match(URL_RE) || []).map((url) => (
-              <Pressable
-                key={url}
-                onPress={() => void openCitationUrl(url).catch(() => Linking.openURL(url))}
-              >
-                <Text style={styles.link}>{url}</Text>
-              </Pressable>
-            ))}
+            <ChatMessageBody
+              message={item}
+              pendingApprovalIds={pendingApprovalIds}
+              onDecide={(id, decision) => void decideInline(id, decision)}
+            />
           </View>
         )}
         ListEmptyComponent={

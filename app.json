@@ -2,7 +2,7 @@
   "expo": {
     "name": "AtleyOS Client",
     "slug": "AtleyOSClient",
-    "version": "1.1.1",
+    "version": "1.2.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "scheme": "atleyos",
@@ -26,6 +26,9 @@
         "NSPhotoLibraryUsageDescription": "AtleyOS learns photo metadata (and media if granted) into your home Profile.",
         "NSMicrophoneUsageDescription": "Send voice notes to your AtleyOS home server for transcription and Chat.",
         "NSFaceIDUsageDescription": "Unlock AtleyOS Client before Chat and Actions.",
+        "LSApplicationQueriesSchemes": [
+          "bitwarden"
+        ],
         "UIBackgroundModes": [
           "fetch",
           "processing"
@@ -34,7 +37,7 @@
     },
     "android": {
       "package": "com.atleyos.client",
-      "versionCode": 13,
+      "versionCode": 15,
       "adaptiveIcon": {
         "backgroundColor": "#0f1419",
         "foregroundImage": "./assets/android-icon-foreground.png",
@@ -68,6 +71,7 @@
       "expo-secure-store",
       "react-native-wireguard-vpn-patched",
       "./plugins/withAtleyosWireGuard.js",
+      "./plugins/withBitwardenQueries.js",
       [
         "expo-camera",
         {

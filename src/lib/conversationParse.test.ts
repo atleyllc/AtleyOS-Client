@@ -45,4 +45,22 @@ describe("conversations", () => {
     assert.equal(detail?.messages[2].role, "assistant");
     assert.equal(detail?.updatedAt, Date.parse("2026-10-09T22:00:00+00:00"));
   });
+
+  it("keeps a tool-only turn", () => {
+    const detail = parseConversation({
+      id: "c3",
+      messages: [
+        {
+          role: "assistant",
+          content: "",
+          tool_calls: [
+            { id: "call_1", function: { name: "list_files", arguments: { path: "/notes" } } },
+          ],
+        },
+      ],
+    });
+    assert.equal(detail?.messages.length, 1);
+    assert.match(detail?.messages[0].content || "", /List files/);
+    assert.equal(detail?.messages[0].toolCalls?.[0].name, "list_files");
+  });
 });

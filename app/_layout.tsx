@@ -27,7 +27,10 @@ export default function RootLayout() {
     kick(false);
     const approvals = startApprovalLive();
     const appSub = AppState.addEventListener("change", (state) => {
-      if (state === "active") void syncApprovalPush().catch(() => undefined);
+      if (state === "active") {
+        approvals.reconnect();
+        void syncApprovalPush().catch(() => undefined);
+      }
       if (state === "active") kick(false);
     });
     const netSub = Network.addNetworkStateListener((event) => {
@@ -67,6 +70,10 @@ export default function RootLayout() {
         <Stack.Screen name="pair" options={{ title: "Pair with home" }} />
         <Stack.Screen name="learn" options={{ title: "Learn from this device" }} />
         <Stack.Screen name="setup" options={{ title: "Set up this phone" }} />
+        <Stack.Screen name="storage" options={{ title: "Storage" }} />
+        <Stack.Screen name="search" options={{ title: "Search" }} />
+        <Stack.Screen name="connectors" options={{ title: "Connectors" }} />
+        <Stack.Screen name="reminders" options={{ title: "Reminders" }} />
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
       </Stack>
     </>
