@@ -1,6 +1,6 @@
 # Install and test on Atley’s Android phone
 
-Version **1.2.1** (Android `versionCode` 18). This is a native build, not Expo Go. Home VPN, photo backup, and LAN discovery need the APK. It installs over 1.2.0 (`versionCode` 15) and 1.1.2 (`versionCode` 14). `versionCode` skips to 18 so it is also above the 0.9.0-beta.9 phone build (17) from the AtleyOS repo.
+Version **1.2.2** (Android `versionCode` 19). This is a native build, not Expo Go. Away apps, photo backup, and LAN discovery need the APK. It installs over 1.2.1 (18), 1.2.0 (`versionCode` 15) and 1.1.2 (`versionCode` 14). `versionCode` skips to 18 so it is also above the 0.9.0-beta.9 phone build (17) from the AtleyOS repo.
 
 The launcher, splash, and notification icon use the Atley OS gold mark from `assets/brand/` (first supplied for 0.9.0-beta.9). `npm test` and `npm run build:android:local` run `scripts/check-app-assets.mjs`, which fails if app.json points at a missing or old icon, if the stock Expo template icon is back, or if a tab has no bundled icon image.
 
@@ -22,7 +22,7 @@ export ANDROID_HOME="$HOME/.local/android"
 npm run build:android:local
 ```
 
-The APK is `dist/AtleyOSClient-1.2.1-preview.apk`. Copy it to the phone and allow install from that source. It installs over 1.2.0 and 1.1.2. The build script always runs `expo prebuild` (without `--clean`) so icon and splash changes reach `android/`.
+The APK is `dist/AtleyOSClient-1.2.2-preview.apk`. Copy it to the phone and allow install from that source. It installs over 1.2.1, 1.2.0, and 1.1.2. The build script always runs `expo prebuild` (without `--clean`) so icon and splash changes reach `android/`.
 
 EAS, if you already have a logged-in account:
 
@@ -54,6 +54,42 @@ Leave home Wi‑Fi (cellular). Home VPN stays off.
 2. If the tunnel is stopped, Chat names `https://atleyos.atley.llc` and says the tunnel is not up. It must not sit on `127.0.0.1` or hang only on the LAN address.
 3. Home apps that have no Away URL will say they need home Wi‑Fi or Home VPN. Do not point Immich or Nextcloud at `https://atleyos.atley.llc` — that host is the client API only.
 4. Optional: Settings → Advanced → Turn on Home VPN, then open a home app that only has a VPN address. Turn it off again. Normal internet should return.
+
+## Away apps (1.2.2)
+
+Photos (Immich), Files (Nextcloud), Media (Jellyfin), and Home (Home Assistant)
+stay off the Cloudflare link: Jellyfin video there breaks Cloudflare's terms and
+Immich uploads hit its 100 MB cap. Away, they go over the AtleyOS VPN.
+
+- **Split tunnel.** The phone routes `10.55.0.0/24` and the home server's own
+  address (`192.168.8.140/32`), nothing else. The address that works on home
+  Wi‑Fi (`http://192.168.8.140:2283` and so on) works away too, so each native
+  app is set up once with one server address.
+- **Autopilot.** With Away apps on, the tunnel is off when the home server
+  answers directly (home Wi‑Fi) and on everywhere else. Network changes re-check.
+  Turning it on at home connects once so Android asks for the VPN permission.
+- **Home tiles.** A tile opens the phone app when it's installed (Android by
+  package, iOS by URL scheme), else the browser. Each tile's menu switches that
+  app between phone app and browser. Away with Away apps off, a tile offers
+  setup instead of opening a dead home address.
+- **Status chip.** Home shows `Home Wi‑Fi`, `Away · apps on`,
+  `Away · connecting`, or `Away · apps off`.
+- **Setup screen** (Settings → Away apps, or Home → tile menu → Away apps):
+  turn it on, the one router rule if the home server couldn't map UDP 51820
+  itself (with copy buttons), and each app's server address. On iPhone, it
+  links the WireGuard app and shares the AtleyOS config to it; turn on
+  On‑Demand there (Cellular and Wi‑Fi, home Wi‑Fi excluded).
+- **Server.** Needs AtleyOS 0.10.0b4 (`/api/client/away-apps`). It opens UDP
+  51820 and the overlay in UFW at start, and reports this phone's last
+  WireGuard handshake.
+
+## Sign-in after server updates (1.2.2)
+
+"Auth failed — stale pair" after a server deploy was a server bug: a request
+that saved `last_seen` could overwrite a token refresh, so the phone's new
+tokens stopped working. 0.10.0b4 fixes the store, and the previous token pair
+stays valid for 10 minutes after a refresh. The phone also reuses tokens that
+another request already refreshed instead of spending an old refresh token.
 
 ## Unpaired
 

@@ -16,7 +16,10 @@ import {
 import { loadSession } from "../../src/lib/session";
 import { probeSurfaces, type SurfaceFlags } from "../../src/lib/surface";
 import { statusChip } from "../../src/lib/tone";
-import { getTunnelState } from "../../src/lib/wireguard";
+import { getTunnelState, isTunnelPaused, syncAwayTunnel } from "../../src/lib/wireguard";
+import { awayChip, planOpen } from "../../src/lib/awayApps";
+import { homeLanAnswers } from "../../src/lib/awayAppsClient";
+import { isAppInstalled, launchApp, openPreference, setOpenPreference } from "../../src/lib/nativeApps";
 import { Icon } from "../../src/components/Icon";
 import type { IconName } from "../../src/components/icons";
 import {
@@ -71,6 +74,9 @@ export default function HomeRailScreen() {
   const [note, setNote] = useState("");
   const [toggleId, setToggleId] = useState<string | null>(null);
   const [onWifi, setOnWifi] = useState<boolean | null>(null);
+  const [atHome, setAtHome] = useState<boolean | null>(null);
+  const [vpnUp, setVpnUp] = useState(false);
+  const [awayEnabled, setAwayEnabled] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
 
   const load = useCallback(async () => {
@@ -86,13 +92,23 @@ export default function HomeRailScreen() {
     const tunnel = await getTunnelState().catch(() => null);
     const wifi = net?.type === Network.NetworkStateType.WIFI;
     setOnWifi(net ? wifi : null);
+    let up = tunnel?.status === "up";
+    setAwayEnabled(!(await isTunnelPaused()));
+    // Any Wi‑Fi isn't home Wi‑Fi. Home is where the server answers directly.
+    let home = Boolean(tunnel?.atHome) || (!up && wifi && session ? await homeLanAnswers(1200) : false);
+    if (Platform.OS === "ios" && !up && !home && session && (await homeLanAnswers(1200))) {
+      // Off Wi‑Fi and home still answers: the WireGuard app has it covered.
+      up = true;
+    }
+    setVpnUp(up);
+    setAtHome(net ? home : null);
     setLinks(
       presentHomeLinks({
         apps,
         lanApiBase: session?.lanApiBase,
         httpsApiBase: session?.httpsApiBase,
-        onWifi: wifi,
-        homeVpnUp: tunnel?.status === "up" && tunnel.mode === "overlay",
+        onWifi: home || up,
+        homeVpnUp: up && tunnel?.mode === "overlay",
       }),
     );
     setPasswords(passwordRowFromApps(apps));
@@ -126,12 +142,52 @@ export default function HomeRailScreen() {
   }
 
   async function openLink(link: HomeLink) {
-    if (!link.openUrl) {
-      Alert.alert(link.title, link.openNote);
+    const url = link.lanUrl || link.openUrl;
+    let up = vpnUp;
+    let home = Boolean(atHome);
+    if (!home && !up && awayEnabled && Platform.OS === "android") {
+      // Away apps is on but asleep: wake it. It may find we're home after all.
+      const st = await syncAwayTunnel({ networkChanged: true }).catch(() => null);
+      up = st?.status === "up";
+      home = Boolean(st?.atHome);
+      setVpnUp(up);
+      setAtHome(home);
+    }
+    if (!home && !up && (await homeLanAnswers())) {
+      // Home answers after all: home Wi‑Fi, or WireGuard On-Demand on iPhone.
+      up = true;
+    }
+    const [installed, prefer] = await Promise.all([
+      isAppInstalled(link.androidPackage, link.iosScheme),
+      openPreference(link.kind),
+    ]);
+    const plan = planOpen({
+      url,
+      atHome: home,
+      vpnUp: up,
+      installed,
+      prefer,
+      androidPackage: link.androidPackage,
+      iosScheme: link.iosScheme,
+    });
+    if (plan.kind === "none") {
+      Alert.alert(link.title, plan.reason);
       return;
     }
+    if (plan.kind === "setup") {
+      Alert.alert(
+        link.title,
+        "You’re away from home Wi‑Fi. Turn on Away apps once and this opens anywhere.",
+        [
+          { text: "Not now", style: "cancel" },
+          { text: "Set up Away apps", onPress: () => router.push("/away-apps") },
+        ],
+      );
+      return;
+    }
+    if (plan.kind === "native" && (await launchApp(plan.androidPackage, plan.iosScheme))) return;
     try {
-      await Linking.openURL(link.openUrl);
+      await Linking.openURL(plan.url);
     } catch (e) {
       Alert.alert(link.title, e instanceof Error ? e.message : String(e));
     }
@@ -156,26 +212,33 @@ export default function HomeRailScreen() {
 
   function linkActions(link: HomeLink): MenuAction[] {
     const actions: MenuAction[] = [];
-    if (link.openUrl) {
-      actions.push({ label: "Copy address", icon: "copy", onPress: () => void Clipboard.setStringAsync(link.openUrl) });
+    const url = link.lanUrl || link.openUrl;
+    if (url) {
+      actions.push({ label: "Copy server address", icon: "copy", onPress: () => void Clipboard.setStringAsync(url) });
+      actions.push({
+        label: "Open in the browser",
+        icon: "globe",
+        onPress: () =>
+          void (async () => {
+            await setOpenPreference(link.kind, "browser");
+            await openLink(link);
+          })(),
+      });
     }
-    actions.push({
-      label: "Show addresses",
-      icon: "link",
-      onPress: () =>
-        Alert.alert(
-          `${link.title} addresses`,
-          [
-            link.lanUrl ? `Home Wi‑Fi: ${link.lanUrl}` : "Home Wi‑Fi: none",
-            link.awayUrl ? `Away: ${link.awayUrl}` : "Away: home didn’t send one",
-            link.overlayUrl ? `Home VPN: ${link.overlayUrl}` : "Home VPN: none",
-            "",
-            link.openNote,
-          ].join("\n"),
-        ),
-    });
+    if (link.androidPackage || link.iosScheme) {
+      actions.push({
+        label: `Open in ${link.appName || "the app"}`,
+        icon: "phone",
+        onPress: () =>
+          void (async () => {
+            await setOpenPreference(link.kind, "native");
+            await openLink(link);
+          })(),
+      });
+    }
+    actions.push({ label: "Away apps", icon: "vpn", onPress: () => router.push("/away-apps") });
     const store = Platform.OS === "ios" ? link.store?.ios : link.store?.android;
-    if (store) actions.push({ label: "Install the phone app", icon: "external", onPress: () => void Linking.openURL(store) });
+    if (store) actions.push({ label: `Get ${link.appName || "the phone app"}`, icon: "external", onPress: () => void Linking.openURL(store) });
     return actions;
   }
 
@@ -184,16 +247,22 @@ export default function HomeRailScreen() {
   return (
     <Screen
       title="Home"
-      right={
-        onWifi == null ? null : (
-          <StatusChip label={onWifi ? "Home Wi‑Fi" : "Away"} tone={onWifi ? "ok" : "accent"} />
-        )
-      }
+      right={(() => {
+        const chip = awayChip({ atHome, vpnUp, enabled: awayEnabled });
+        return chip ? <StatusChip {...chip} /> : null;
+      })()}
       refreshing={refreshing}
       onRefresh={() => void refresh()}
       testID="home-screen"
     >
       {note ? <Note tone="danger">{note}</Note> : null}
+      {atHome === false && !vpnUp && !awayEnabled ? (
+        <Pressable onPress={() => router.push("/away-apps")} accessibilityRole="button" testID="away-apps-banner">
+          <Note tone="accent" icon="vpn">
+            Away from home? Turn on Away apps once to open Photos, Files, Media, and Home anywhere.
+          </Note>
+        </Pressable>
+      ) : null}
 
       <View style={styles.grid}>
         {links.map((link) => (

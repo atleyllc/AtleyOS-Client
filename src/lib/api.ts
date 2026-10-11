@@ -282,8 +282,8 @@ export async function apiFetch<T = unknown>(
         }
         if (res.status === 401) {
           msg =
-            "Auth failed — stale pair from an older home setup. On home Wi‑Fi: " +
-            "Settings → Remote Access → Show pair QR, then re-pair this phone and try Chat again.";
+            "Auth failed: home no longer knows this phone (it was revoked or re-paired). " +
+            "On home Wi‑Fi, tap Re-pair and scan the dashboard QR.";
         }
         throw new ApiError(msg, res.status, body);
       }
@@ -383,6 +383,12 @@ let refreshInFlight: Promise<Session | null> | null = null;
 async function refreshSession(session: Session): Promise<Session | null> {
   if (refreshInFlight) return refreshInFlight;
   refreshInFlight = (async () => {
+    // Another caller (the event stream, a parallel request) may have rotated
+    // the tokens already. Use those instead of spending an old refresh token.
+    const latest = await loadSession();
+    if (latest && latest.refreshToken && latest.refreshToken !== session.refreshToken) {
+      return latest;
+    }
     // Prefer bases that already accept this device; never refresh via a 401 hop.
     const picked = await pickReachableBase(session, session.apiToken);
     const bases = picked.bases.length ? picked.bases : await orderedBases(session);

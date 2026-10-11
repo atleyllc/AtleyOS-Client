@@ -9,6 +9,8 @@ import * as SecureStore from "expo-secure-store";
 import { AppState, NativeModules, Platform } from "react-native";
 import { loadSession } from "./session";
 import { postEndpoint } from "./api";
+import { pickConf, withSplitTunnel } from "./awayApps";
+import { hostFromApiBase } from "./homeApps";
 
 const CONF_KEY = "atleyos.client.wg.conf.v1";
 const STATE_KEY = "atleyos.client.wg.state.v1";
@@ -19,6 +21,8 @@ export type TunnelState = {
   mode: "lan" | "overlay" | "relay" | "unknown";
   message?: string;
   relayUrl?: string;
+  /** Home server answered on its home address with the tunnel down. */
+  atHome?: boolean;
   updatedAt: number;
 };
 
@@ -243,8 +247,7 @@ export async function pauseTunnel(): Promise<TunnelState> {
   const state: TunnelState = {
     status: "down",
     mode: "unknown",
-    message:
-      "Home VPN off. Chat still works on Wi‑Fi or Away HTTPS. Turn Home VPN on only for full home-network mode.",
+    message: "Away apps off. Chat still works anywhere; Photos, Files, Media, and Home need home Wi‑Fi.",
     updatedAt: Date.now(),
   };
   await setTunnelState(state);
@@ -253,7 +256,8 @@ export async function pauseTunnel(): Promise<TunnelState> {
 
 async function clearPaused(): Promise<void> {
   try {
-    await SecureStore.deleteItemAsync(PAUSED_KEY);
+    // "0", not delete: a missing key reads as off (older installs).
+    await SecureStore.setItemAsync(PAUSED_KEY, "0");
   } catch {
     /* ignore */
   }
@@ -271,8 +275,7 @@ export async function ensureTunnel(opts: EnsureTunnelOpts = {}): Promise<TunnelS
       const state: TunnelState = {
         status: "down",
         mode: "unknown",
-        message:
-          "Home VPN off. Use Away HTTPS for Chat off Wi‑Fi, or turn Home VPN on for the full home network.",
+        message: "Away apps off. Chat still works anywhere; Photos, Files, Media, and Home need home Wi‑Fi.",
         updatedAt: Date.now(),
       };
       await setTunnelState(state);
@@ -280,7 +283,10 @@ export async function ensureTunnel(opts: EnsureTunnelOpts = {}): Promise<TunnelS
     }
 
     const session = await loadSession();
-    let conf = (await loadWgConf()) || session?.wgClientConf || null;
+    let conf = pickConf(await loadWgConf(), session?.wgClientConf);
+    // Route the overlay and the home server's own address, nothing else.
+    // The address that works on home Wi‑Fi then works away too.
+    if (conf) conf = withSplitTunnel(conf, hostFromApiBase(session?.lanApiBase));
     // Only refresh Endpoint while we can still talk to home (usually on Wi‑Fi).
     // On cellular the tunnel must come up first with the stored public endpoint.
     if (conf && !opts.forceReconnect) {
@@ -330,7 +336,7 @@ export async function ensureTunnel(opts: EnsureTunnelOpts = {}): Promise<TunnelS
               status: "up",
               mode: "overlay",
               message:
-                "Connected to home. Stay connected automatically — no toggle when you leave.",
+                "Away apps on. Photos, Files, Media, and Home open like they do at home.",
               relayUrl: session?.relayUrl,
               updatedAt: Date.now(),
             };
@@ -348,7 +354,7 @@ export async function ensureTunnel(opts: EnsureTunnelOpts = {}): Promise<TunnelS
         status: "up",
         mode: "overlay",
         message:
-          "Connected to home. Away access is automatic — leave the tunnel on.",
+          "Away apps on. Photos, Files, Media, and Home open like they do at home.",
         relayUrl: session?.relayUrl,
         updatedAt: Date.now(),
       };
@@ -375,6 +381,63 @@ export async function ensureTunnel(opts: EnsureTunnelOpts = {}): Promise<TunnelS
   const runPromise = run;
   connectInFlight = run;
   return run;
+}
+
+/**
+ * Away apps on autopilot: off on home Wi‑Fi, on everywhere else.
+ * Called on launch, on foreground, and when the network changes.
+ */
+export async function syncAwayTunnel(opts: { networkChanged?: boolean } = {}): Promise<TunnelState> {
+  if (await isTunnelPaused()) return getTunnelState();
+  const wg = loadPatchedModule();
+  if (wg && !opts.networkChanged) {
+    try {
+      await ensureNativeInitialized(wg);
+      const st = await wg.getStatus();
+      // A tunnel that reaches home stays up. One that doesn't (for example
+      // Wi‑Fi to home Wi‑Fi, where the router can't loop back) gets re-checked:
+      // that switch doesn't change the network type, so nothing else would.
+      if (st.isConnected || st.status === "CONNECTED") {
+        const { overlayAnswers } = await import("./awayAppsClient");
+        if (await overlayAnswers()) return ensureTunnel();
+      }
+    } catch {
+      /* fall through */
+    }
+  }
+  if (wg) {
+    try {
+      await ensureNativeInitialized(wg);
+      await wg.disconnect();
+    } catch {
+      /* not connected */
+    }
+  }
+  const { homeLanAnswers } = await import("./awayAppsClient");
+  if (await homeLanAnswers()) {
+    const state: TunnelState = {
+      status: "down",
+      mode: "lan",
+      atHome: true,
+      message: "On home Wi‑Fi. Away apps turns itself on when you leave.",
+      updatedAt: Date.now(),
+    };
+    await setTunnelState(state);
+    return state;
+  }
+  return ensureTunnel({ forceReconnect: true });
+}
+
+/**
+ * Turn Away apps on. At home this connects once so Android asks for the VPN
+ * permission now (it can't ask later from the background), then lets the
+ * autopilot switch it off until the phone leaves.
+ */
+export async function enableAwayApps(): Promise<TunnelState> {
+  await clearPaused();
+  const first = await ensureTunnel({ resume: true, forceReconnect: true });
+  if (first.status !== "up") return first;
+  return syncAwayTunnel({ networkChanged: true });
 }
 
 /** Tear down tunnel (revoke / unpair only). */
@@ -419,9 +482,10 @@ export async function exportWgConfForShare(): Promise<{
   endpointNote?: string;
 } | null> {
   const session = await loadSession();
-  let conf = (await loadWgConf()) || session?.wgClientConf || null;
+  let conf = pickConf(await loadWgConf(), session?.wgClientConf);
   if (!conf) return null;
   conf = await refreshConfEndpoint(conf);
+  conf = withSplitTunnel(conf, hostFromApiBase(session?.lanApiBase));
   return {
     conf,
     filename: "atleyos-client.conf",

@@ -14,6 +14,9 @@ export type HomeAppLike = {
   title?: string;
   app?: string;
   native_schemes?: string[];
+  android_package?: string;
+  ios_scheme?: string;
+  app_name?: string;
   store?: { ios?: string; android?: string };
   overlay_url?: string;
   lan_url?: string;
@@ -36,17 +39,30 @@ export type HomeLink = {
   status: string | null;
   fromServer: boolean;
   nativeSchemes: string[];
+  androidPackage: string;
+  iosScheme: string;
+  appName: string;
   store?: { ios?: string; android?: string };
   openUrl: string;
   openMode: "lan" | "away" | "overlay" | "none";
   openNote: string;
 };
 
-const STANDARD: Array<{ kind: Exclude<HomeKind, "other">; title: string; app: string; port: number }> = [
-  { kind: "photos", title: "Photos", app: "immich", port: 2283 },
-  { kind: "files", title: "Files", app: "nextcloud", port: 10081 },
-  { kind: "media", title: "Media", app: "jellyfin", port: 8097 },
-  { kind: "home", title: "Home", app: "home_assistant", port: 8123 },
+type Standard = {
+  kind: Exclude<HomeKind, "other">;
+  title: string;
+  app: string;
+  port: number;
+  appName: string;
+  androidPackage: string;
+  iosScheme: string;
+};
+
+const STANDARD: Standard[] = [
+  { kind: "photos", title: "Photos", app: "immich", port: 2283, appName: "Immich", androidPackage: "app.alextran.immich", iosScheme: "immich://" },
+  { kind: "files", title: "Files", app: "nextcloud", port: 10081, appName: "Nextcloud", androidPackage: "com.nextcloud.client", iosScheme: "nextcloud://" },
+  { kind: "media", title: "Media", app: "jellyfin", port: 8097, appName: "Jellyfin", androidPackage: "org.jellyfin.mobile", iosScheme: "" },
+  { kind: "home", title: "Home", app: "home_assistant", port: 8123, appName: "Home Assistant", androidPackage: "io.homeassistant.companion.android", iosScheme: "homeassistant://" },
 ];
 
 export function classifyHomeApp(input: { id?: string; title?: string; app?: string }): HomeKind {
@@ -138,13 +154,23 @@ export function presentHomeLinks(input: {
         status: null,
         fromServer: false,
         nativeSchemes: [],
+        androidPackage: spec.androidPackage,
+        iosScheme: spec.iosScheme,
+        appName: spec.appName,
       });
       continue;
     }
+    // Older servers don't send package ids; the standard apps are known.
+    const known = {
+      androidPackage: existing.androidPackage || spec.androidPackage,
+      iosScheme: existing.iosScheme || spec.iosScheme,
+      appName: existing.appName || spec.appName,
+    };
+    byKind.set(spec.kind, { ...existing, ...known });
     // An explicit empty lan_url means home has no LAN address. An omitted
     // field (older server) may still use the standard port on the saved host.
     if (!existing.lanSpecified && !existing.lanUrl && lanUrl) {
-      byKind.set(spec.kind, { ...existing, lanUrl });
+      byKind.set(spec.kind, { ...existing, ...known, lanUrl });
     }
   }
 
@@ -207,6 +233,9 @@ function draftFromApp(app: HomeAppLike, kind: HomeKind, blocked: Set<string>): H
     status: readStatus(app),
     fromServer: true,
     nativeSchemes: (app.native_schemes || []).filter((s) => typeof s === "string" && s.trim()),
+    androidPackage: (app.android_package || "").trim(),
+    iosScheme: (app.ios_scheme || "").trim(),
+    appName: (app.app_name || "").trim(),
     store: app.store,
   };
 }

@@ -6,7 +6,7 @@ import { StatusBar } from "expo-status-bar";
 import { colors } from "../src/lib/theme";
 import { startApprovalLive, syncApprovalPush } from "../src/lib/approvalLive";
 import { clearPreferredBase } from "../src/lib/api";
-import { ensureTunnel, isTunnelPaused } from "../src/lib/wireguard";
+import { syncAwayTunnel } from "../src/lib/wireguard";
 import { loadSession } from "../src/lib/session";
 
 export default function RootLayout() {
@@ -19,9 +19,8 @@ export default function RootLayout() {
         if (!alive) return;
         const s = await loadSession();
         if (!s) return;
-        // HTTPS-first: do not auto-start Home VPN unless Owner left it On.
-        if (await isTunnelPaused()) return;
-        await ensureTunnel({ forceReconnect });
+        // Away apps: off on home Wi‑Fi, on elsewhere (only if the Owner turned it on).
+        await syncAwayTunnel({ networkChanged: forceReconnect }).catch(() => undefined);
       })();
     };
     kick(false);
@@ -78,6 +77,7 @@ export default function RootLayout() {
         <Stack.Screen name="reminders" options={{ title: "Reminders" }} />
         <Stack.Screen name="machines" options={{ title: "Machines" }} />
         <Stack.Screen name="coding" options={{ title: "Coding jobs" }} />
+        <Stack.Screen name="away-apps" options={{ title: "Away apps" }} />
         <Stack.Screen name="usage" options={{ title: "AI usage" }} />
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
       </Stack>

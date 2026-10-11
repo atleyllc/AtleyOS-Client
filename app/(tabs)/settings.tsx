@@ -23,9 +23,7 @@ import { clearSession, loadSession } from "../../src/lib/session";
 import type { SyncStatus } from "../../src/lib/types";
 import {
   awayPathSummary,
-  ensureTunnel,
   getTunnelState,
-  pauseTunnel,
   stopTunnel,
   type TunnelState,
 } from "../../src/lib/wireguard";
@@ -38,7 +36,6 @@ export default function SettingsScreen() {
   const [checking, setChecking] = useState(false);
   const [tunnel, setTunnel] = useState<TunnelState | null>(null);
   const [sync, setSync] = useState<SyncStatus | null>(null);
-  const [vpnBusy, setVpnBusy] = useState(false);
 
   const load = useCallback(async () => {
     const session = await loadSession();
@@ -79,15 +76,6 @@ export default function SettingsScreen() {
       return `Reached home via ${via} at ${probe.base}.`;
     }
     return probe.message;
-  }
-
-  async function turnVpn(on: boolean) {
-    setVpnBusy(true);
-    try {
-      setTunnel(on ? await ensureTunnel({ resume: true, forceReconnect: true }) : await pauseTunnel());
-    } finally {
-      setVpnBusy(false);
-    }
   }
 
   function repair() {
@@ -177,10 +165,17 @@ export default function SettingsScreen() {
         />
         <ListRow
           icon="vpn"
-          title="Home VPN"
-          subtitle={vpnOn ? "Whole phone is on the home network" : "Optional. Chat works without it."}
-          right={<StatusChip label={vpnBusy ? "Working…" : vpnOn ? "On" : "Off"} tone={vpnOn ? "ok" : "muted"} />}
-          onPress={() => void turnVpn(!vpnOn)}
+          title="Away apps"
+          subtitle={
+            vpnOn
+              ? "On. Photos, Files, Media, and Home work away"
+              : tunnel?.atHome
+                ? "On. Sleeps on home Wi‑Fi"
+                : "Open your home apps anywhere"
+          }
+          right={<StatusChip label={vpnOn || tunnel?.atHome ? "On" : "Set up"} tone={vpnOn || tunnel?.atHome ? "ok" : "muted"} />}
+          onPress={() => router.push("/away-apps")}
+          chevron
         />
         <ListRow
           icon="external"
@@ -199,7 +194,7 @@ export default function SettingsScreen() {
         />
       </Group>
       {tunnel?.message || tunnel?.relayUrl ? (
-        <Disclosure title="Home VPN details">
+        <Disclosure title="Away apps details">
           <Text style={ui.body}>
             {tunnel?.status || "down"} · {tunnel?.mode || "unknown"}
             {tunnel?.message ? `\n${tunnel.message}` : ""}
