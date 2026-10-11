@@ -6,7 +6,7 @@ The launcher, splash, and notification icon use the Atley OS gold mark from `ass
 
 This phone is a primary AtleyOS interface. Chat, the inbox, passwords, and storage live here. Notices stay in this app. It does not open ntfy or any other notice app.
 
-Tab icons (Chat, Home, You, Inbox, Settings) are bundled PNG images. They do not use an icon font, so a missing Ionicons or Material font cannot leave empty boxes on Android or iOS. Builds before 1.2.0 set no tab icon at all, so React Navigation drew its `⏷` placeholder, which Android shows as a boxed X. The Inbox tab uses the check glyph.
+Tab icons (Chat, Home, You, Inbox, Settings) are bundled PNG images. They do not use an icon font, so a missing Ionicons or Material font cannot leave empty boxes on Android or iOS. Builds before 1.2.0 set no tab icon at all, so React Navigation drew its `⏷` placeholder, which Android shows as a boxed X. The Inbox tab uses the inbox tray glyph.
 
 The private server repo was not readable while this was written. Away `https://atleyos.atley.llc/api/client/health` was up on 2026-10-09. Pairing and Chat still need a device token from a dashboard QR.
 
@@ -58,3 +58,15 @@ Leave home Wi‑Fi (cellular). Home VPN stays off.
 ## Unpaired
 
 Settings → Re-pair clears the session. Chat should say this phone isn’t paired and open pairing. It should not call `http://127.0.0.1:8765`.
+
+## Layout (1.2.1)
+
+Each tab has one title and no navigator header. Cards are grouped with icons, status is a short chip (Up, Down, Waiting), and secondary actions such as addresses sit behind the ⋯ menu on each card.
+
+- **Chat**: connection pill (Home Wi‑Fi, Away, Home VPN, Offline), model chip, history sheet, empty state with suggestions, bubbles, and a composer that stays above the keyboard.
+- **Home**: a grid of home apps (one tap opens), then Tools: Machines, Coding jobs, AI usage, Connectors, Storage, Search, Reminders. A tool only shows when the server has its route.
+- **You**: the phone sync row says how many items are waiting and why, shows progress while uploading, and drains the queue 100 at a time. The queue is de‑duplicated, so collecting again no longer grows it.
+- **Inbox**: approvals with Allow and Deny, notices with a ⋯ menu, quiet hours in a sheet.
+- **Machines**, **Coding jobs**, **AI usage**: read from `/api/client/machines`, `/api/client/coding`, and `/api/client/ai-usage`. Machine approvals can be decided here or in Inbox.
+
+All glyphs are bundled PNGs from Lucide (ISC, `assets/icons/LICENSE-lucide.txt`) with @2x and @3x copies. No icon font is used.

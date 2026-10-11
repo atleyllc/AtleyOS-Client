@@ -1,15 +1,11 @@
 import { useCallback, useState } from "react";
-import { Alert, Linking, Platform, ScrollView, StyleSheet, Text } from "react-native";
+import { Alert, Linking, Platform, Pressable, StyleSheet, Text, View } from "react-native";
 import * as Clipboard from "expo-clipboard";
 import * as Network from "expo-network";
-import { router, useFocusEffect } from "expo-router";
+import { router, useFocusEffect, type Href } from "expo-router";
 import { fetchFavorites, toggleFavorite, type Favorite } from "../../src/lib/favorites";
 import { loadHomeApps } from "../../src/lib/homeOpeners";
-import {
-  homeStatusLine,
-  presentHomeLinks,
-  type HomeLink,
-} from "../../src/lib/homeApps";
+import { presentHomeLinks, type HomeLink } from "../../src/lib/homeApps";
 import {
   BITWARDEN_SCHEME,
   choosePasswordOpen,
@@ -19,11 +15,52 @@ import {
 } from "../../src/lib/passwords";
 import { loadSession } from "../../src/lib/session";
 import { probeSurfaces, type SurfaceFlags } from "../../src/lib/surface";
+import { statusChip } from "../../src/lib/tone";
 import { getTunnelState } from "../../src/lib/wireguard";
-import { Disclosure, PrimaryButton, QuietButton, ScreenIntro, Section } from "../../src/components/ui";
-import { colors, space } from "../../src/lib/theme";
+import { Icon } from "../../src/components/Icon";
+import type { IconName } from "../../src/components/icons";
+import {
+  Group,
+  GroupLabel,
+  IconBadge,
+  ListRow,
+  MenuButton,
+  Note,
+  Screen,
+  StatusChip,
+  type MenuAction,
+} from "../../src/components/ui";
+import { colors, radius, space } from "../../src/lib/theme";
 
-const EMPTY_FLAGS: SurfaceFlags = { storage: false, search: false, connectors: false, reminders: false };
+const EMPTY_FLAGS: SurfaceFlags = {
+  storage: false,
+  search: false,
+  connectors: false,
+  reminders: false,
+  machines: false,
+  coding: false,
+  usage: false,
+};
+
+const KIND_ICON: Record<HomeLink["kind"], IconName> = {
+  photos: "photos",
+  files: "files",
+  media: "media",
+  home: "smart-home",
+  other: "app",
+};
+
+type Tool = { flag: keyof SurfaceFlags; title: string; subtitle: string; icon: IconName; href: Href };
+
+const TOOLS: Tool[] = [
+  { flag: "machines", title: "Machines", subtitle: "Server, Mac, and PC jobs", icon: "machines", href: "/machines" },
+  { flag: "coding", title: "Coding jobs", subtitle: "Changes started from Chat", icon: "coding", href: "/coding" },
+  { flag: "usage", title: "AI usage", subtitle: "Local models, Cursor, and plans", icon: "usage", href: "/usage" },
+  { flag: "connectors", title: "Connectors", subtitle: "Accounts AtleyOS can use", icon: "connectors", href: "/connectors" },
+  { flag: "storage", title: "Storage", subtitle: "Drives and backups", icon: "storage", href: "/storage" },
+  { flag: "search", title: "Search", subtitle: "Files and notes at home", icon: "search", href: "/search" },
+  { flag: "reminders", title: "Reminders", subtitle: "Reminders and routines", icon: "reminders", href: "/reminders" },
+];
 
 export default function HomeRailScreen() {
   const [links, setLinks] = useState<HomeLink[]>([]);
@@ -33,6 +70,8 @@ export default function HomeRailScreen() {
   const [favoritesSupported, setFavoritesSupported] = useState(false);
   const [note, setNote] = useState("");
   const [toggleId, setToggleId] = useState<string | null>(null);
+  const [onWifi, setOnWifi] = useState<boolean | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
 
   const load = useCallback(async () => {
     const session = await loadSession();
@@ -45,14 +84,17 @@ export default function HomeRailScreen() {
     }
     const net = await Network.getNetworkStateAsync().catch(() => null);
     const tunnel = await getTunnelState().catch(() => null);
-    const next = presentHomeLinks({
-      apps,
-      lanApiBase: session?.lanApiBase,
-      httpsApiBase: session?.httpsApiBase,
-      onWifi: net?.type === Network.NetworkStateType.WIFI,
-      homeVpnUp: tunnel?.status === "up" && tunnel.mode === "overlay",
-    });
-    setLinks(next);
+    const wifi = net?.type === Network.NetworkStateType.WIFI;
+    setOnWifi(net ? wifi : null);
+    setLinks(
+      presentHomeLinks({
+        apps,
+        lanApiBase: session?.lanApiBase,
+        httpsApiBase: session?.httpsApiBase,
+        onWifi: wifi,
+        homeVpnUp: tunnel?.status === "up" && tunnel.mode === "overlay",
+      }),
+    );
     setPasswords(passwordRowFromApps(apps));
     setNote(warning);
     if (!session) {
@@ -73,6 +115,15 @@ export default function HomeRailScreen() {
       void load();
     }, [load]),
   );
+
+  async function refresh() {
+    setRefreshing(true);
+    try {
+      await load();
+    } finally {
+      setRefreshing(false);
+    }
+  }
 
   async function openLink(link: HomeLink) {
     if (!link.openUrl) {
@@ -103,139 +154,193 @@ export default function HomeRailScreen() {
     }
   }
 
-  const primary = links.filter((link) => link.kind !== "other");
-  const extra = links.filter((link) => link.kind === "other");
+  function linkActions(link: HomeLink): MenuAction[] {
+    const actions: MenuAction[] = [];
+    if (link.openUrl) {
+      actions.push({ label: "Copy address", icon: "copy", onPress: () => void Clipboard.setStringAsync(link.openUrl) });
+    }
+    actions.push({
+      label: "Show addresses",
+      icon: "link",
+      onPress: () =>
+        Alert.alert(
+          `${link.title} addresses`,
+          [
+            link.lanUrl ? `Home Wi‑Fi: ${link.lanUrl}` : "Home Wi‑Fi: none",
+            link.awayUrl ? `Away: ${link.awayUrl}` : "Away: home didn’t send one",
+            link.overlayUrl ? `Home VPN: ${link.overlayUrl}` : "Home VPN: none",
+            "",
+            link.openNote,
+          ].join("\n"),
+        ),
+    });
+    const store = Platform.OS === "ios" ? link.store?.ios : link.store?.android;
+    if (store) actions.push({ label: "Install the phone app", icon: "external", onPress: () => void Linking.openURL(store) });
+    return actions;
+  }
+
+  const tools = TOOLS.filter((tool) => surfaces[tool.flag]);
 
   return (
-    <ScrollView style={styles.root} contentContainerStyle={styles.content}>
-      <ScreenIntro
-        title="Home"
-        subtitle="Photos, Files, Media, and Home open at the LAN address on home Wi‑Fi, or the Away address when you are away."
-      />
-      {note ? <Text style={styles.warn}>{note}</Text> : null}
-      {primary.map((link) => (
-        <Section key={link.kind} eyebrow="Everyday" title={link.title}>
-          <Text style={styles.body}>
-            {link.openNote}
-            {"\n"}
-            {homeStatusLine(link)}
-          </Text>
-          <PrimaryButton
-            label={link.openUrl ? `Open ${link.title}` : "No address yet"}
-            onPress={() => void openLink(link)}
+    <Screen
+      title="Home"
+      right={
+        onWifi == null ? null : (
+          <StatusChip label={onWifi ? "Home Wi‑Fi" : "Away"} tone={onWifi ? "ok" : "accent"} />
+        )
+      }
+      refreshing={refreshing}
+      onRefresh={() => void refresh()}
+      testID="home-screen"
+    >
+      {note ? <Note tone="danger">{note}</Note> : null}
+
+      <View style={styles.grid}>
+        {links.map((link) => (
+          <AppTile
+            key={`${link.kind}-${link.app}-${link.title}`}
+            icon={KIND_ICON[link.kind]}
+            title={link.title}
+            status={link.status}
             disabled={!link.openUrl}
+            onPress={() => void openLink(link)}
+            actions={linkActions(link)}
           />
-          <Disclosure title="Addresses">
-            <Text style={styles.mono}>
-              {link.lanUrl ? `LAN ${link.lanUrl}` : "LAN — none"}
-              {"\n"}
-              {link.awayUrl ? `Away ${link.awayUrl}` : "Away — home didn’t send one"}
-              {"\n"}
-              {link.overlayUrl ? `Home VPN ${link.overlayUrl}` : "Home VPN — none"}
-            </Text>
-            {link.openUrl ? (
-              <QuietButton
-                label="Copy the address to open"
-                onPress={() => void Clipboard.setStringAsync(link.openUrl)}
+        ))}
+        {passwords?.present ? (
+          <AppTile
+            icon="passwords"
+            title={passwords.title || "Passwords"}
+            status={null}
+            onPress={() => void openPasswords()}
+            actions={[
+              {
+                label: "Install Bitwarden",
+                icon: "external",
+                onPress: () => void Linking.openURL(storeUrlForPlatform(Platform.OS)),
+              },
+              ...(passwords.serverUrl
+                ? [
+                    {
+                      label: "Copy server address",
+                      icon: "copy" as const,
+                      onPress: () => void Clipboard.setStringAsync(passwords.serverUrl),
+                    },
+                  ]
+                : []),
+            ]}
+          />
+        ) : null}
+      </View>
+
+      {tools.length ? (
+        <>
+          <GroupLabel>Tools</GroupLabel>
+          <Group>
+            {tools.map((tool) => (
+              <ListRow
+                key={tool.flag}
+                icon={tool.icon}
+                title={tool.title}
+                subtitle={tool.subtitle}
+                chevron
+                onPress={() => router.push(tool.href)}
               />
-            ) : null}
-            <StoreLink link={link} />
-          </Disclosure>
-        </Section>
-      ))}
-      {passwords?.present ? (
-        <Section eyebrow="Everyday" title={passwords.title || "Passwords"}>
-          <Text style={styles.body}>
-            Opens Bitwarden when it is installed. Otherwise it opens the server URL. LAN and Home VPN addresses are not used.
-          </Text>
-          <PrimaryButton label="Open Passwords" onPress={() => void openPasswords()} />
-          <QuietButton
-            label="Install Bitwarden"
-            onPress={() => void Linking.openURL(storeUrlForPlatform(Platform.OS))}
-          />
-          {passwords.serverUrl ? (
-            <QuietButton
-              label="Copy server URL"
-              onPress={() => void Clipboard.setStringAsync(passwords.serverUrl)}
-            />
-          ) : null}
-        </Section>
+            ))}
+          </Group>
+        </>
       ) : null}
-      {surfaces.storage || surfaces.search || surfaces.connectors || surfaces.reminders ? (
-        <Section eyebrow="Everyday" title="On this phone">
-          {surfaces.storage ? <QuietButton label="Storage" onPress={() => router.push("/storage")} /> : null}
-          {surfaces.search ? <QuietButton label="Search" onPress={() => router.push("/search")} /> : null}
-          {surfaces.connectors ? <QuietButton label="Connectors" onPress={() => router.push("/connectors")} /> : null}
-          {surfaces.reminders ? <QuietButton label="Reminders and routines" onPress={() => router.push("/reminders")} /> : null}
-        </Section>
-      ) : null}
-      {favoritesSupported ? (
-        <Section eyebrow="Everyday" title="Favorites">
-          <Text style={styles.body}>
-            {favorites.length
-              ? "These come from home. Toggle sends that favorite to the home server."
-              : "Home didn’t return any favorites."}
-          </Text>
-          {favorites.map((favorite) => (
-            <QuietButton
-              key={favorite.id}
-              label={
-                toggleId === favorite.id
-                  ? "Sending…"
-                  : `${favorite.label}${favorite.domain ? ` · ${favorite.domain}` : ""}${favorite.state ? ` · ${favorite.state}` : ""}`
-              }
-              onPress={() =>
-                void (async () => {
-                  setToggleId(favorite.id);
-                  try {
-                    await toggleFavorite(favorite);
-                    await load();
-                  } catch (e) {
-                    Alert.alert(favorite.label, e instanceof Error ? e.message : String(e));
-                  } finally {
-                    setToggleId(null);
+
+      {favoritesSupported && favorites.length ? (
+        <>
+          <GroupLabel>Favorites</GroupLabel>
+          <Group>
+            {favorites.map((favorite) => {
+              const chip = statusChip(favorite.state);
+              return (
+                <ListRow
+                  key={favorite.id}
+                  icon="sparkles"
+                  tone="muted"
+                  title={favorite.label}
+                  subtitle={favorite.domain || undefined}
+                  right={toggleId === favorite.id ? <StatusChip label="Sending…" tone="accent" dot={false} /> : chip ? <StatusChip {...chip} /> : null}
+                  onPress={() =>
+                    void (async () => {
+                      setToggleId(favorite.id);
+                      try {
+                        await toggleFavorite(favorite);
+                        await load();
+                      } catch (e) {
+                        Alert.alert(favorite.label, e instanceof Error ? e.message : String(e));
+                      } finally {
+                        setToggleId(null);
+                      }
+                    })()
                   }
-                })()
-              }
-            />
-          ))}
-        </Section>
+                />
+              );
+            })}
+          </Group>
+        </>
       ) : null}
-      {extra.length ? (
-        <Section eyebrow="Advanced" title="Other apps">
-          {extra.map((link) => (
-            <Disclosure key={`${link.app}-${link.title}`} title={link.title}>
-              <Text style={styles.body}>{link.openNote}</Text>
-              <PrimaryButton
-                label={link.openUrl ? "Open" : "No address yet"}
-                onPress={() => void openLink(link)}
-                disabled={!link.openUrl}
-              />
-            </Disclosure>
-          ))}
-        </Section>
-      ) : null}
-    </ScrollView>
+    </Screen>
   );
 }
 
-function StoreLink({ link }: { link: HomeLink }) {
-  const store = Platform.OS === "ios" ? link.store?.ios : link.store?.android;
-  if (!store) return null;
-  return <QuietButton label="Install the phone app" onPress={() => void Linking.openURL(store)} />;
+function AppTile({
+  icon,
+  title,
+  status,
+  onPress,
+  actions,
+  disabled,
+}: {
+  icon: IconName;
+  title: string;
+  status: string | null;
+  onPress: () => void;
+  actions: MenuAction[];
+  disabled?: boolean;
+}) {
+  const chip = statusChip(status);
+  return (
+    <Pressable
+      onPress={onPress}
+      style={({ pressed }) => [styles.tile, pressed && styles.pressed]}
+      accessibilityRole="button"
+      accessibilityLabel={`Open ${title}${chip ? `, ${chip.label}` : ""}`}
+      testID={`home-app-${title.toLowerCase()}`}
+    >
+      <View style={styles.tileTop}>
+        <IconBadge name={icon} size={44} tone={disabled ? "muted" : "accent"} />
+        <MenuButton title={title} actions={actions} />
+      </View>
+      <Text style={styles.tileTitle} numberOfLines={1}>
+        {title}
+      </Text>
+      <View style={styles.tileFoot}>
+        {chip ? <StatusChip {...chip} /> : <Text style={styles.tileHint}>{disabled ? "No address yet" : "Open"}</Text>}
+        {!disabled ? <Icon name="external" size={14} color={colors.faint} /> : null}
+      </View>
+    </Pressable>
+  );
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: colors.bg },
-  content: { padding: space.md, gap: space.md, paddingBottom: space.xl },
-  body: { color: colors.muted, lineHeight: 21 },
-  warn: { color: colors.danger, lineHeight: 20 },
-  mono: {
-    color: colors.text,
-    fontSize: 12,
-    lineHeight: 18,
+  grid: { flexDirection: "row", flexWrap: "wrap", justifyContent: "space-between", rowGap: space.sm + 2 },
+  tile: {
+    width: "48.5%",
     backgroundColor: colors.surface,
-    padding: space.sm,
-    borderRadius: 8,
+    borderRadius: radius.lg,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
+    padding: space.md - 2,
+    gap: space.sm,
   },
+  pressed: { opacity: 0.7 },
+  tileTop: { flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", marginRight: -8, marginTop: -4 },
+  tileTitle: { color: colors.text, fontSize: 16, fontWeight: "700" },
+  tileFoot: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  tileHint: { color: colors.muted, fontSize: 12, fontWeight: "600" },
 });

@@ -1,22 +1,28 @@
 import { Tabs } from "expo-router";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { TabIcon } from "../../src/components/TabIcon";
 import { colors } from "../../src/lib/theme";
 
 export default function TabsLayout() {
+  const insets = useSafeAreaInsets();
   return (
     <Tabs
       screenOptions={({ route }) => ({
-        headerStyle: { backgroundColor: colors.bg },
-        headerTintColor: colors.text,
+        // Each tab draws its own single title, so the navigator header stays hidden.
+        headerShown: false,
+        sceneStyle: { backgroundColor: colors.bg },
         tabBarStyle: {
           backgroundColor: colors.surface,
           borderTopColor: colors.border,
+          height: 64 + insets.bottom,
+          paddingTop: 6,
+          paddingBottom: insets.bottom + 8,
         },
+        tabBarLabelStyle: { fontSize: 11, fontWeight: "600" },
         tabBarActiveTintColor: colors.accent,
         tabBarInactiveTintColor: colors.muted,
-        tabBarIcon: ({ focused, size }) => (
-          <TabIcon route={route.name} focused={focused} size={size} />
-        ),
+        tabBarHideOnKeyboard: true,
+        tabBarIcon: ({ focused }) => <TabIcon route={route.name} focused={focused} size={24} />,
       })}
     >
       <Tabs.Screen name="chat" options={{ title: "Chat" }} />

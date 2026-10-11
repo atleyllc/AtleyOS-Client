@@ -17,7 +17,8 @@ import {
   type InstalledModel,
   type ModelCatalog,
 } from "../lib/models";
-import { colors, space } from "../lib/theme";
+import { colors, radius, space } from "../lib/theme";
+import { Icon } from "./Icon";
 
 type Presentation = "inline" | "chip";
 
@@ -138,7 +139,11 @@ export function ModelSwitcher({ presentation }: { presentation: Presentation }) 
           accessibilityLabel={`Chat model, ${chipLabel}. Open model list.`}
           testID="chat-model-chip"
         >
-          <Text style={styles.chipText}>{chipLabel}</Text>
+          <Icon name="cpu" size={14} color={active?.leavesHome ? colors.warn : colors.muted} />
+          <Text style={styles.chipText} numberOfLines={1}>
+            {chipLabel}
+          </Text>
+          <Icon name="chevron-right" size={12} color={colors.faint} style={{ transform: [{ rotate: "90deg" }] }} />
         </Pressable>
         {catalog?.ollamaMessage ? (
           <Text style={styles.ollamaNote} accessibilityRole="alert">
@@ -273,22 +278,21 @@ function ModelList({
 
 const styles = StyleSheet.create({
   chip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
     alignSelf: "flex-start",
-    marginHorizontal: space.md,
-    marginTop: space.sm,
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderRadius: 999,
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.border,
+    maxWidth: 220,
+    paddingVertical: 4,
+    paddingHorizontal: 10,
+    borderRadius: radius.pill,
+    backgroundColor: colors.surfaceRaised,
   },
-  chipText: { color: colors.text, fontSize: 13, fontWeight: "600" },
+  chipText: { color: colors.text, fontSize: 12, fontWeight: "700", flexShrink: 1 },
   ollamaNote: {
     color: colors.danger,
     fontWeight: "700",
     fontSize: 13,
-    marginHorizontal: space.md,
     marginTop: space.xs,
   },
   backdrop: {
@@ -298,8 +302,8 @@ const styles = StyleSheet.create({
   },
   sheet: {
     backgroundColor: colors.bg,
-    borderTopLeftRadius: 16,
-    borderTopRightRadius: 16,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
     padding: space.md,
     gap: space.sm,
   },
@@ -316,7 +320,7 @@ const styles = StyleSheet.create({
     gap: space.sm,
     paddingVertical: 12,
     paddingHorizontal: space.md,
-    borderRadius: 12,
+    borderRadius: radius.md,
     backgroundColor: colors.surface,
     borderWidth: 1,
     borderColor: colors.border,

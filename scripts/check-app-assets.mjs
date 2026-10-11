@@ -111,6 +111,14 @@ for (const tab of tabs) {
   }
 }
 
+// Every glyph the app requires must exist, with @2x and @3x for sharp tabs and icons.
+for (const match of iconSource.matchAll(/require\("\.\.\/\.\.\/(assets\/(?:icons|tab)\/[^"]+\.png)"\)/g)) {
+  const rel = match[1];
+  for (const variant of [rel, rel.replace(/\.png$/, "@2x.png"), rel.replace(/\.png$/, "@3x.png")]) {
+    if (!fs.existsSync(path.join(root, variant))) fail(`${variant} is missing (required by src/components/icons.ts)`);
+  }
+}
+
 // Icon fonts are not loaded anywhere; using one would bring the boxes back.
 function scanSources(dir) {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {

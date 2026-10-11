@@ -62,7 +62,9 @@ export default function RootLayout() {
         screenOptions={{
           headerStyle: { backgroundColor: colors.bg },
           headerTintColor: colors.text,
-          headerTitleStyle: { fontWeight: "600" },
+          headerTitleStyle: { fontWeight: "700" },
+          headerShadowVisible: false,
+          headerBackButtonDisplayMode: "minimal",
           contentStyle: { backgroundColor: colors.bg },
         }}
       >
@@ -74,6 +76,9 @@ export default function RootLayout() {
         <Stack.Screen name="search" options={{ title: "Search" }} />
         <Stack.Screen name="connectors" options={{ title: "Connectors" }} />
         <Stack.Screen name="reminders" options={{ title: "Reminders" }} />
+        <Stack.Screen name="machines" options={{ title: "Machines" }} />
+        <Stack.Screen name="coding" options={{ title: "Coding jobs" }} />
+        <Stack.Screen name="usage" options={{ title: "AI usage" }} />
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
       </Stack>
     </>
