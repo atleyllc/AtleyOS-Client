@@ -17,6 +17,31 @@ describe("home apps", () => {
     assert.equal(classifyHomeApp({ title: "Anchor" }), "other");
   });
 
+  it("leaves the passwords row out of the app list", () => {
+    const links = presentHomeLinks({
+      apps: [
+        {
+          id: "passwords",
+          title: "Passwords",
+          app: "vaultwarden",
+          lan_url: "http://192.168.8.140:8080",
+          https_url: "https://vault.example",
+          overlay_url: "http://10.55.0.1:8080",
+        },
+      ],
+      lanApiBase: "http://192.168.8.140:8765",
+      onWifi: true,
+    });
+    assert.equal(
+      links.some((link) => /password|vault/i.test(`${link.title} ${link.app}`)),
+      false,
+    );
+    assert.equal(
+      links.some((link) => link.openUrl.includes("8080") || link.lanUrl.includes("8080")),
+      false,
+    );
+  });
+
   it("does not use a loopback host for standard ports", () => {
     assert.equal(hostFromApiBase("http://127.0.0.1:8765"), "");
     assert.equal(hostFromApiBase("http://192.168.8.140:8765"), "192.168.8.140");

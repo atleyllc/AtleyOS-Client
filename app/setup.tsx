@@ -1,11 +1,12 @@
 import { useCallback, useState } from "react";
-import { Alert, ScrollView, StyleSheet, Text } from "react-native";
+import { Alert, Linking, Platform, ScrollView, StyleSheet, Text } from "react-native";
 import * as Clipboard from "expo-clipboard";
 import * as Network from "expo-network";
 import { router, useFocusEffect } from "expo-router";
 import { clientStatus } from "../src/lib/api";
 import { findHomeLink, presentHomeLinks } from "../src/lib/homeApps";
 import { loadHomeApps } from "../src/lib/homeOpeners";
+import { passwordRowFromApps, storeUrlForPlatform } from "../src/lib/passwords";
 import { requestAllLearningPermissions, runObservationCycle } from "../src/lib/observation";
 import { loadSession, updateSession } from "../src/lib/session";
 import {
@@ -23,6 +24,7 @@ export default function SetupScreen() {
   const [busy, setBusy] = useState<string | null>(null);
   const [photosUrl, setPhotosUrl] = useState("");
   const [filesUrl, setFilesUrl] = useState("");
+  const [passwordsUrl, setPasswordsUrl] = useState("");
   const [awayLive, setAwayLive] = useState<AwayCheck>("unknown");
 
   const refresh = useCallback(async () => {
@@ -33,11 +35,12 @@ export default function SetupScreen() {
       if (!session || !awayAddress) away = session ? "missing" : "unknown";
       else if (session.httpsReady === false) away = "down";
     }
-    const links = await linksForSession();
-    const photos = findHomeLink(links, "photos")?.openUrl || findHomeLink(links, "photos")?.lanUrl || "";
-    const files = findHomeLink(links, "files")?.openUrl || findHomeLink(links, "files")?.lanUrl || "";
+    const loaded = await linksForSession();
+    const photos = findHomeLink(loaded.links, "photos")?.openUrl || findHomeLink(loaded.links, "photos")?.lanUrl || "";
+    const files = findHomeLink(loaded.links, "files")?.openUrl || findHomeLink(loaded.links, "files")?.lanUrl || "";
     setPhotosUrl(photos);
     setFilesUrl(files);
+    setPasswordsUrl(loaded.passwordsUrl);
     setSteps(
       phoneSetupSteps({
         paired: Boolean(session),
@@ -45,6 +48,8 @@ export default function SetupScreen() {
         awayAddress,
         photosUrl: photos,
         filesUrl: files,
+        passwordsUrl: loaded.passwordsUrl,
+        passwordsSkipped: Boolean(session?.passwordsSetupSkippedAt),
         learningDone: Boolean(session?.learningConsentAt),
       }),
     );
@@ -109,6 +114,11 @@ export default function SetupScreen() {
     }
   }
 
+  async function skipPasswords() {
+    await updateSession({ passwordsSetupSkippedAt: Date.now() });
+    await refresh();
+  }
+
   async function finish() {
     await updateSession({
       setupSeenAt: Date.now(),
@@ -150,6 +160,20 @@ export default function SetupScreen() {
               disabled={!filesUrl}
             />
           ) : null}
+          {step.id === "passwords" ? (
+            <>
+              <PrimaryButton
+                label={step.primary}
+                onPress={() => void copyUrl(passwordsUrl, "Passwords")}
+                disabled={!passwordsUrl}
+              />
+              <QuietButton
+                label="Install Bitwarden"
+                onPress={() => void Linking.openURL(storeUrlForPlatform(Platform.OS))}
+              />
+              {step.done ? null : <QuietButton label="Skip" onPress={() => void skipPasswords()} />}
+            </>
+          ) : null}
           {step.id === "learn" && !step.done ? (
             <PrimaryButton
               label={busy === "learn" ? "Asking…" : step.primary}
@@ -180,12 +204,15 @@ async function linksForSession() {
     }
   }
   const net = await Network.getNetworkStateAsync().catch(() => null);
-  return presentHomeLinks({
-    apps,
-    lanApiBase: session?.lanApiBase,
-    httpsApiBase: session?.httpsApiBase,
-    onWifi: net?.type === Network.NetworkStateType.WIFI,
-  });
+  return {
+    passwordsUrl: passwordRowFromApps(apps).serverUrl,
+    links: presentHomeLinks({
+      apps,
+      lanApiBase: session?.lanApiBase,
+      httpsApiBase: session?.httpsApiBase,
+      onWifi: net?.type === Network.NetworkStateType.WIFI,
+    }),
+  };
 }
 
 const styles = StyleSheet.create({
