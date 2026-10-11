@@ -1,5 +1,14 @@
 # AtleyOS Client
 
+> **Moved.** This repo is archived (read-only). The phone app now lives in
+> [atleyllc/AtleyOS under `client/`](https://github.com/atleyllc/AtleyOS/tree/main/client),
+> with its full history.
+>
+> - New APKs: [AtleyOS releases](https://github.com/atleyllc/AtleyOS/releases), tags `client-v*`
+>   (server releases are `v*`). See [client/docs/RELEASING.md](https://github.com/atleyllc/AtleyOS/blob/main/client/docs/RELEASING.md).
+> - Older APKs (1.2.2 and earlier) stay on [this repo's releases](https://github.com/atleyllc/AtleyOS-Client/releases).
+> - Open issues and PRs against atleyllc/AtleyOS.
+
 Primary phone app for **AtleyOS**. Chat, the inbox, passwords, and storage live here. Notices stay in this app.
 
 **Model:** 1 server · many clients.
