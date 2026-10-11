@@ -1,5 +1,7 @@
 import { Platform } from "react-native";
 import * as Notifications from "expo-notifications";
+import { isQuietAt, noticeTitle, type InboxKind } from "./inbox";
+import { loadQuietHours } from "./quietStore";
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -16,19 +18,29 @@ async function ensureChannel(): Promise<void> {
   if (Platform.OS !== "android") return;
   if (!channelReady) {
     channelReady = Notifications.setNotificationChannelAsync("approvals", {
-      name: "Approvals",
+      name: "AtleyOS",
       importance: Notifications.AndroidImportance.DEFAULT,
     }).then(() => undefined);
   }
   await channelReady;
 }
 
+async function allowedToShow(): Promise<boolean> {
+  const quiet = await loadQuietHours();
+  return !isQuietAt(quiet, new Date());
+}
+
 /**
- * Local notice. Title and body match the server push.
- * `data` is only the opaque id. Details come from GET /api/client/approvals.
+ * Local notice. The shade stays generic.
+ * `data` is only the opaque id and kind. Details stay in the inbox.
  */
 export async function notifyApprovalWaiting(id: string): Promise<void> {
+  await notifyInboxKind("approval", id);
+}
+
+export async function notifyInboxKind(kind: InboxKind, id: string): Promise<void> {
   if (!id) return;
+  if (!(await allowedToShow())) return;
   const current = await Notifications.getPermissionsAsync();
   let status = current.status;
   if (status !== "granted") {
@@ -39,8 +51,8 @@ export async function notifyApprovalWaiting(id: string): Promise<void> {
   await Notifications.scheduleNotificationAsync({
     content: {
       title: "AtleyOS",
-      body: "Something is waiting.",
-      data: { id },
+      body: noticeTitle(kind),
+      data: { id, kind },
     },
     trigger: null,
   });

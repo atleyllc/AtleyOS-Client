@@ -1,8 +1,14 @@
+import { extrasFromChatJson } from "./chatTools";
 import { threadTitle } from "./chatThreads";
+import type { ToolCallView } from "./chatTools";
+import type { SearchHit } from "./searchParse";
 
 export type ServerMessage = {
   role: "user" | "assistant" | "system";
   content: string;
+  toolCalls?: ToolCallView[];
+  citations?: SearchHit[];
+  embeddingRoute?: string;
 };
 
 export type ServerConversation = {
@@ -53,12 +59,23 @@ export function parseMessages(value: unknown): ServerMessage[] {
   for (const item of value) {
     const rec = record(item);
     if (!rec) continue;
-    const content = text(rec.content) || text(rec.text) || text(rec.body);
-    if (!content) continue;
+    const extras = extrasFromChatJson(rec);
+    const content =
+      text(rec.content) ||
+      text(rec.text) ||
+      text(rec.body) ||
+      extras.toolCalls.map((tool) => tool.summary).filter(Boolean).join("\n");
+    if (!content && extras.toolCalls.length === 0 && extras.citations.length === 0) continue;
     const roleRaw = text(rec.role).toLowerCase();
     const role =
       roleRaw === "user" || roleRaw === "owner" ? "user" : roleRaw === "system" ? "system" : "assistant";
-    out.push({ role, content });
+    out.push({
+      role,
+      content,
+      ...(extras.toolCalls.length ? { toolCalls: extras.toolCalls } : {}),
+      ...(extras.citations.length ? { citations: extras.citations } : {}),
+      ...(extras.embeddingRoute ? { embeddingRoute: extras.embeddingRoute } : {}),
+    });
   }
   return out;
 }

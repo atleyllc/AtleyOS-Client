@@ -1,4 +1,5 @@
 import { isLoopbackClientBase } from "./apiBases";
+import { isPasswordsRow } from "./passwords";
 
 /**
  * Photos / Files / Media / Home links for the phone.
@@ -109,6 +110,8 @@ export function presentHomeLinks(input: {
 
   const blocked = blockedAppHosts(input.httpsApiBase);
   for (const app of input.apps || []) {
+    // Passwords opens https_url or server_url, never LAN or overlay.
+    if (isPasswordsRow(app)) continue;
     const kind = classifyHomeApp(app);
     const link = draftFromApp(app, kind, blocked);
     if (kind === "other") {

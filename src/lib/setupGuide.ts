@@ -12,10 +12,12 @@ export type SetupSnapshot = {
   awayAddress: string;
   photosUrl: string;
   filesUrl: string;
+  passwordsUrl?: string;
+  passwordsSkipped?: boolean;
   learningDone: boolean;
 };
 
-export type SetupStepId = "pair" | "away" | "photos" | "files" | "learn";
+export type SetupStepId = "pair" | "away" | "photos" | "files" | "passwords" | "learn";
 
 export type SetupStep = {
   id: SetupStepId;
@@ -60,6 +62,10 @@ export function phoneSetupSteps(snapshot: SetupSnapshot): SetupStep[] {
     ? `In the Nextcloud app on this phone, set the server URL to ${snapshot.filesUrl}.`
     : "Pair on home Wi‑Fi first so this phone can show the Files URL.";
 
+  const passwordsBody = snapshot.passwordsUrl
+    ? `Install Bitwarden. In Bitwarden, set the server to Self-hosted and paste ${snapshot.passwordsUrl}. You can skip this and open Passwords from Home later.`
+    : "Install Bitwarden. When home publishes the Passwords server, set Bitwarden to Self-hosted and paste that URL. You can skip this.";
+
   return [
     {
       id: "pair",
@@ -88,6 +94,13 @@ export function phoneSetupSteps(snapshot: SetupSnapshot): SetupStep[] {
       body: filesBody,
       done: false,
       primary: snapshot.filesUrl ? "Copy Files URL" : "Files URL unavailable",
+    },
+    {
+      id: "passwords",
+      title: "Passwords",
+      body: passwordsBody,
+      done: Boolean(snapshot.passwordsSkipped),
+      primary: snapshot.passwordsUrl ? "Copy server URL" : "Server URL unavailable",
     },
     {
       id: "learn",

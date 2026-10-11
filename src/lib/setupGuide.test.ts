@@ -25,8 +25,10 @@ describe("phone setup", () => {
     });
     assert.deepEqual(
       steps.map((step) => step.id),
-      ["pair", "away", "photos", "files", "learn"],
+      ["pair", "away", "photos", "files", "passwords", "learn"],
     );
+    assert.match(steps[4].body, /Bitwarden/);
+    assert.match(steps[4].body, /Self-hosted/);
     assert.equal(steps[0].done, true);
     assert.match(steps[2].body, /192\.168\.8\.140:2283/);
     assert.match(steps[2].body, /Immich/);

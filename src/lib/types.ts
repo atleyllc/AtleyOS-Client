@@ -41,6 +41,8 @@ export type Session = {
   learningConsentAt?: number;
   /** Set when the phone setup guide has been finished or skipped. */
   setupSeenAt?: number;
+  /** Set when the Bitwarden setup step was skipped. */
+  passwordsSetupSkippedAt?: number;
   homeVpnAvailable?: boolean;
   profileContinuity?: boolean;
   productModel?: string;
@@ -66,6 +68,9 @@ export type HomeApp = {
 export type ChatMessage = {
   role: "user" | "assistant" | "system";
   content: string;
+  toolCalls?: import("./chatTools").ToolCallView[];
+  citations?: import("./searchParse").SearchHit[];
+  embeddingRoute?: string;
 };
 
 export type SyncStatus = {

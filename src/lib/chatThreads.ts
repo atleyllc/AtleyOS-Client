@@ -1,6 +1,9 @@
 export type ThreadMessage = {
   role: "user" | "assistant" | "system";
   content: string;
+  toolCalls?: import("./chatTools").ToolCallView[];
+  citations?: import("./searchParse").SearchHit[];
+  embeddingRoute?: string;
 };
 
 export type LocalThread = {

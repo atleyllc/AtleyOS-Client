@@ -3,7 +3,18 @@
 export type ApprovalStreamEvent =
   | { kind: "ready" }
   | { kind: "approval"; id: string }
-  | { kind: "ping" };
+  | { kind: "ping" }
+  | { kind: "notice"; name: string; payload: unknown };
+
+const NOTICE_EVENTS = new Set([
+  "storage_alert",
+  "reminder",
+  "routine",
+  "routine_result",
+  "alert",
+  "notification",
+  "knock",
+]);
 
 let eventsConnected = false;
 const listeners = new Set<() => void>();
@@ -28,16 +39,20 @@ export function approvalEventsAreConnected(): boolean {
 export function takeApprovalEvents(buffer: string): {
   events: ApprovalStreamEvent[];
   rest: string;
+  lastEventId: string;
 } {
   const normalized = buffer.replace(/\r\n/g, "\n");
   const parts = normalized.split("\n\n");
   const rest = parts.pop() ?? "";
   const events: ApprovalStreamEvent[] = [];
+  let lastEventId = "";
   for (const part of parts) {
+    const idLine = part.split("\n").find((line) => line.startsWith("id:"));
+    if (idLine) lastEventId = idLine.slice(3).trim();
     const event = parseApprovalFrame(part);
     if (event) events.push(event);
   }
-  return { events, rest };
+  return { events, rest, lastEventId };
 }
 
 export function parseApprovalFrame(frame: string): ApprovalStreamEvent | null {
@@ -62,8 +77,20 @@ export function parseApprovalFrame(frame: string): ApprovalStreamEvent | null {
     return id ? { kind: "approval", id } : null;
   }
   if (eventName === "ready") return { kind: "ready" };
+  if (NOTICE_EVENTS.has(eventName)) {
+    return { kind: "notice", name: eventName, payload: payloadObject(payload) };
+  }
   if (comment && !eventName && !payload) return { kind: "ping" };
   return null;
+}
+
+function payloadObject(payload: string): unknown {
+  if (!payload) return {};
+  try {
+    return JSON.parse(payload) as unknown;
+  } catch {
+    return { raw: payload };
+  }
 }
 
 function idFromPayload(payload: string): string {

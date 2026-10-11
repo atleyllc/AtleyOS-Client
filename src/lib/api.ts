@@ -7,7 +7,8 @@ import {
 } from "./apiBases";
 import { explainUnreachable, NotPairedError, UNPAIRED_MESSAGE } from "./connectionCopy";
 import { takeApprovalEvents, type ApprovalStreamEvent } from "./approvalEvents";
-import { chatErrorCopy, reduceChatStream } from "./sseChat";
+import { extrasFromChatJson } from "./chatTools";
+import { chatErrorCopy, conversationIdFromJson, reduceChatStream, type ChatStreamReduction } from "./sseChat";
 import { sessionPatchFromStatus } from "./statusSync";
 import type { HomeApp, PairPayload, Session } from "./types";
 import { loadSession, saveSession, updateSession } from "./session";
@@ -519,7 +520,7 @@ export async function homeOpeners() {
 export async function chatCompletions(
   messages: { role: string; content: string }[],
   opts?: { stream?: boolean },
-): Promise<{ content: string }> {
+): Promise<ChatStreamReduction> {
   const session = await loadSession();
   if (!session) throw new NotPairedError(UNPAIRED_MESSAGE);
   const body = {
@@ -528,14 +529,25 @@ export async function chatCompletions(
     stream: false,
     ...opts,
   };
-  const out = await apiFetch<{
-    choices?: { message?: { content?: string } }[];
-  }>("/v1/chat/completions", {
+  const out = await apiFetch<unknown>("/v1/chat/completions", {
     method: "POST",
     body: JSON.stringify(body),
   });
-  const content = out?.choices?.[0]?.message?.content ?? "";
-  return { content };
+  const extras = extrasFromChatJson(out);
+  const content =
+    out && typeof out === "object" && Array.isArray((out as { choices?: unknown }).choices)
+      ? String(
+          ((out as { choices: { message?: { content?: string } }[] }).choices[0]?.message?.content) || "",
+        )
+      : "";
+  return {
+    content,
+    streamed: false,
+    conversationId: conversationIdFromJson(out),
+    toolCalls: extras.toolCalls,
+    citations: extras.citations,
+    embeddingRoute: extras.embeddingRoute,
+  };
 }
 
 /** 400 is a real chat error (empty_message / no_conversation_assignment), not “no streaming”. */
@@ -561,8 +573,8 @@ function chatHttpError(status: number, raw: string): ApiError {
  */
 export async function chatCompletionsStream(
   messages: { role: string; content: string }[],
-  onDelta: (content: string) => void,
-): Promise<{ content: string; streamed: boolean; conversationId: string | null }> {
+  onDelta: (content: string, extras: ChatStreamReduction) => void,
+): Promise<ChatStreamReduction> {
   const session = await loadSession();
   if (!session) throw new NotPairedError(UNPAIRED_MESSAGE);
   try {
@@ -570,8 +582,8 @@ export async function chatCompletionsStream(
   } catch (error) {
     if (error instanceof ApiError && (error.status === 401 || STREAM_UNSUPPORTED.has(error.status))) {
       const done = await chatCompletions(messages);
-      if (done.content) onDelta(done.content);
-      return { content: done.content, streamed: false, conversationId: null };
+      if (done.content || done.toolCalls.length || done.citations.length) onDelta(done.content, done);
+      return done;
     }
     throw error;
   }
@@ -580,20 +592,14 @@ export async function chatCompletionsStream(
 async function postChatStream(
   session: Session,
   messages: { role: string; content: string }[],
-  onDelta: (content: string) => void,
-): Promise<{ content: string; streamed: boolean; conversationId: string | null }> {
+  onDelta: (content: string, extras: ChatStreamReduction) => void,
+): Promise<ChatStreamReduction> {
   const token = session.apiToken;
   const picked = await pickReachableBase(session, token);
   if (!picked.bases.length) throw await failureFor(session, picked.probed);
   const base = picked.bases[0];
   const payload = JSON.stringify({ model: "atleyos", messages, stream: true });
-  const result = await new Promise<{
-    content: string;
-    streamed: boolean;
-    conversationId: string | null;
-    status: number;
-    raw: string;
-  }>((resolve, reject) => {
+  const result = await new Promise<ChatStreamReduction & { status: number; raw: string }>((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open("POST", `${base}/v1/chat/completions`);
     xhr.setRequestHeader("Accept", "text/event-stream, application/json");
@@ -602,7 +608,7 @@ async function postChatStream(
     xhr.timeout = 180000;
     const pump = (final: boolean) => {
       const reduced = reduceChatStream(xhr.responseText || "", final);
-      if (reduced.content) onDelta(reduced.content);
+      if (reduced.content || reduced.toolCalls.length || reduced.citations.length) onDelta(reduced.content, reduced);
       return reduced;
     };
     xhr.onprogress = () => {
@@ -627,36 +633,55 @@ async function postChatStream(
     content: result.content,
     streamed: result.streamed,
     conversationId: result.conversationId,
+    toolCalls: result.toolCalls,
+    citations: result.citations,
+    embeddingRoute: result.embeddingRoute,
   };
 }
 
+const EVENT_STALL_MS = 45_000;
+
 /**
  * Server-sent events while the app is open.
+ * A stall of 45s reconnects. Any byte resets the backoff.
  * 404/405/501 means this server has no event stream. Other closes reconnect.
+ * `reconnect` is for coming back to the foreground.
  */
 export function subscribeClientEvents(handlers: {
   onEvent: (event: ApprovalStreamEvent) => void;
   onUnsupported: () => void;
   onDown?: () => void;
-}): { close: () => void } {
+}): { close: () => void; reconnect: () => void } {
   let closed = false;
   let xhr: XMLHttpRequest | null = null;
   let timer: ReturnType<typeof setTimeout> | null = null;
+  let stall: ReturnType<typeof setTimeout> | null = null;
   let attempt = 0;
+  let lastEventId = "";
+  const dropped = new Set<XMLHttpRequest>();
+
+  const clearStall = () => {
+    if (stall) clearTimeout(stall);
+    stall = null;
+  };
 
   const shutdown = () => {
     closed = true;
     if (timer) clearTimeout(timer);
     timer = null;
-    xhr?.abort();
+    clearStall();
+    if (xhr) {
+      dropped.add(xhr);
+      xhr.abort();
+    }
     xhr = null;
   };
 
-  const schedule = (ms: number) => {
+  const schedule = (ms: number, path: "/api/client/events" | "/api/mobile/events" = "/api/client/events") => {
     if (closed) return;
     if (timer) clearTimeout(timer);
     timer = setTimeout(() => {
-      void connect("/api/client/events");
+      void connect(path);
     }, ms);
   };
 
@@ -673,36 +698,57 @@ export function subscribeClientEvents(handlers: {
     }
     if (!base) {
       attempt += 1;
-      schedule(Math.min(30_000, 2000 * attempt));
+      schedule(Math.min(30_000, 2000 * attempt), path);
       return;
     }
     if (closed) return;
+    if (xhr) {
+      dropped.add(xhr);
+      xhr.abort();
+    }
     const req = new XMLHttpRequest();
     xhr = req;
     let cursor = 0;
     let rest = "";
+    const armStall = () => {
+      clearStall();
+      stall = setTimeout(() => {
+        if (closed || xhr !== req || dropped.has(req)) return;
+        handlers.onDown?.();
+        dropped.add(req);
+        req.abort();
+        attempt += 1;
+        schedule(Math.min(15_000, 1000 * attempt), path);
+      }, EVENT_STALL_MS);
+    };
     const pump = () => {
       const text = req.responseText || "";
       if (text.length < cursor) {
         cursor = 0;
         rest = "";
       }
+      const grew = text.length > cursor;
+      if (grew) attempt = 0;
       const parsed = takeApprovalEvents(rest + text.slice(cursor));
       cursor = text.length;
       rest = parsed.rest;
+      if (parsed.lastEventId) lastEventId = parsed.lastEventId;
       for (const event of parsed.events) handlers.onEvent(event);
+      if (grew) armStall();
     };
     req.open("GET", `${base}${path}`);
     req.setRequestHeader("Accept", "text/event-stream");
     req.setRequestHeader("Cache-Control", "no-cache");
     req.setRequestHeader("Authorization", `Bearer ${session.apiToken}`);
+    if (lastEventId) req.setRequestHeader("Last-Event-ID", lastEventId);
     req.timeout = 0;
     req.onprogress = () => pump();
     req.onreadystatechange = () => {
       if (req.readyState === 3 || req.readyState === 4) pump();
     };
     req.onload = () => {
-      if (closed || xhr !== req) return;
+      if (closed || dropped.has(req)) return;
+      clearStall();
       pump();
       const status = req.status;
       if ((status === 404 || status === 405 || status === 501) && path === "/api/client/events") {
@@ -715,23 +761,38 @@ export function subscribeClientEvents(handlers: {
       }
       handlers.onDown?.();
       if (status === 401) {
-        void refreshSession(session).finally(() => schedule(1000));
+        void refreshSession(session).finally(() => schedule(1000, path));
         return;
       }
       attempt += 1;
-      schedule(Math.min(15_000, 1000 * attempt));
+      schedule(Math.min(15_000, 1000 * attempt), path);
     };
     req.onerror = () => {
-      if (closed || xhr !== req) return;
+      if (closed || dropped.has(req)) return;
+      clearStall();
       handlers.onDown?.();
       attempt += 1;
-      schedule(Math.min(15_000, 1000 * attempt));
+      schedule(Math.min(15_000, 1000 * attempt), path);
     };
     req.send();
+    armStall();
+  };
+
+  const reconnect = () => {
+    if (closed) return;
+    attempt = 0;
+    clearStall();
+    if (timer) clearTimeout(timer);
+    if (xhr) {
+      dropped.add(xhr);
+      xhr.abort();
+      xhr = null;
+    }
+    schedule(0);
   };
 
   void connect("/api/client/events");
-  return { close: shutdown };
+  return { close: shutdown, reconnect };
 }
 
 export async function listConversations() {

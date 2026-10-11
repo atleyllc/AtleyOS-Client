@@ -22,6 +22,17 @@ describe("approval events", () => {
       { kind: "ping" },
     ]);
     assert.equal(parsed.rest, "");
+    assert.equal(parsed.lastEventId, "");
+  });
+
+  it("reads a storage alert and keeps the last event id", () => {
+    const body = ["id: 9", "event: storage_alert", 'data: {"id":"k1","title":"Disk"}', "", ""].join("\n");
+    const parsed = takeApprovalEvents(body);
+    assert.equal(parsed.lastEventId, "9");
+    assert.equal(parsed.events[0]?.kind, "notice");
+    if (parsed.events[0]?.kind === "notice") {
+      assert.equal(parsed.events[0].name, "storage_alert");
+    }
   });
 
   it("holds a partial frame", () => {

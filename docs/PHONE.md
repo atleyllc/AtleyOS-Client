@@ -1,6 +1,12 @@
 # Install and test on Atley’s Android phone
 
-Version **1.1.1** (Android `versionCode` 13). This is a native build, not Expo Go. Home VPN, photo backup, and LAN discovery need the APK.
+Version **1.2.1** (Android `versionCode` 18). This is a native build, not Expo Go. Home VPN, photo backup, and LAN discovery need the APK. It installs over 1.2.0 (`versionCode` 15) and 1.1.2 (`versionCode` 14). `versionCode` skips to 18 so it is also above the 0.9.0-beta.9 phone build (17) from the AtleyOS repo.
+
+The launcher, splash, and notification icon use the Atley OS gold mark from `assets/brand/` (first supplied for 0.9.0-beta.9). `npm test` and `npm run build:android:local` run `scripts/check-app-assets.mjs`, which fails if app.json points at a missing or old icon, if the stock Expo template icon is back, or if a tab has no bundled icon image.
+
+This phone is a primary AtleyOS interface. Chat, the inbox, passwords, and storage live here. Notices stay in this app. It does not open ntfy or any other notice app.
+
+Tab icons (Chat, Home, You, Inbox, Settings) are bundled PNG images. They do not use an icon font, so a missing Ionicons or Material font cannot leave empty boxes on Android or iOS. Builds before 1.2.0 set no tab icon at all, so React Navigation drew its `⏷` placeholder, which Android shows as a boxed X. The Inbox tab uses the check glyph.
 
 The private server repo was not readable while this was written. Away `https://atleyos.atley.llc/api/client/health` was up on 2026-10-09. Pairing and Chat still need a device token from a dashboard QR.
 
@@ -16,7 +22,7 @@ export ANDROID_HOME="$HOME/.local/android"
 npm run build:android:local
 ```
 
-The APK is `dist/AtleyOSClient-1.1.1-preview.apk`. Copy it to the phone and allow install from that source. It installs over 1.1.0 (`versionCode` 12).
+The APK is `dist/AtleyOSClient-1.2.1-preview.apk`. Copy it to the phone and allow install from that source. It installs over 1.2.0 and 1.1.2. The build script always runs `expo prebuild` (without `--clean`) so icon and splash changes reach `android/`.
 
 EAS, if you already have a logged-in account:
 
@@ -35,9 +41,10 @@ Phone on the same Wi‑Fi as the server.
 5. The model chip still lists installed models. Switching calls `POST /api/client/models/active` with `{"role":"conversation","model":"<name>"}`. Chat itself still sends `model: "atleyos"`.
 6. Home tab: **Open Photos / Files / Media / Home** uses the LAN address. Files is port `10081`. Media is port `8097`. Status says up or down when home sends it. An app must not open `https://atleyos.atley.llc`.
 7. You: **Save memory** is the filled button. Notes and **Forget** are inside **Notes**. A forgotten id that home does not have says so. It does not try a second delete.
-8. Approvals: empty, or real rows from home. Allow and Deny. The screen shows whether home ran it (`executed`) and the server `message`. With the app open, new rows arrive from `GET /api/client/events`. The notice says “Something is waiting.” and does not include the approval text.
-9. Approval push stays off until you turn **Approval push** on in the home dashboard (Remote Access). Registering the phone does not flip that switch. After it is on, a closed app can receive a notice whose data is only an id; opening the app loads the real row.
-10. Settings → **Check connection** names the address that answered.
+8. Inbox: approvals from home, plus reminder, routine, and alert rows when the event stream sends them. Allow and Deny. A storage alert can only be dismissed. Quiet hours are on this screen. The notice says “Something is waiting.”, “A reminder is ready.”, “A routine finished.”, or “Home sent an alert.” and does not include the row text. With the app open, new rows arrive from `GET /api/client/events`. Coming back to the app reconnects that stream.
+9. Home: Passwords opens Bitwarden when it is installed, otherwise the `https_url` or `server_url` from the passwords row. It does not open a LAN or Home VPN address. Storage, Search, Connectors, and Reminders appear only when those routes answer. Search, Connectors, and Reminders stay hidden while the server returns 404.
+10. Approval push stays off until you turn **Approval push** on in the home dashboard (Remote Access), or home enables phone notices. Registering the phone does not flip that switch. After it is on, and `POST /api/client/push/register` exists, a closed app can receive a notice whose data is only an id. Opening the app loads the real row. If home names ntfy or another app, this phone skips that and keeps notices here.
+11. Settings → **Check connection** names the address that answered.
 
 ## Test Away — `https://atleyos.atley.llc`
 

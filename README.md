@@ -1,6 +1,6 @@
 # AtleyOS Client
 
-Companion app for **end-user devices (EUDs)** — phones, tablets, and other clients paired to one AtleyOS home server.
+Primary phone app for **AtleyOS**. Chat, the inbox, passwords, and storage live here. Notices stay in this app.
 
 **Model:** 1 server · many clients.
 
@@ -43,7 +43,11 @@ Gap list: [`docs/PARITY-2026-10-09.md`](docs/PARITY-2026-10-09.md)
 
 Settings → **Chat model**, and the model chip on Chat, list installed models from `GET /api/client/models` and set the active chat model with `POST /api/client/models/active` (`{"role":"conversation","model":"<name>"}`). Local models stay on the home server. A remote model is labeled **Leaves home**. If Ollama is down, the picker says **Ollama not running at home**. If the home server is older and that route 404s, Chat still works and the picker says this server has no model list. See [`docs/MODELS.md`](docs/MODELS.md).
 
-Chat asks home to stream the reply, keeps `conversation_id` on the thread, and lists `GET /api/client/conversations` when that route returns them. Approvals uses the real list, shows `executed` and `message`, and listens on `GET /api/client/events` while the app is open. You saves Memory with **Save memory** when `GET /api/client/memory` exists. Install steps: [`docs/PHONE.md`](docs/PHONE.md).
+Chat asks home to stream the reply, keeps `conversation_id` on the thread, and lists `GET /api/client/conversations` when that route returns them. A reply can show a tool call in plain language, an inline approval (a delete asks a second time and names undo), and a citation with path, page, snippet, and open link. If `embedding_route` is `cloud`, Chat says the text can leave the home server. The model chip is unchanged.
+
+Inbox is the notifications center: reminders, routine results, approvals, and alerts, with quiet hours on the phone. `GET /api/client/events` stays open while the app is in use and reconnects when you come back. Push uses Expo only when home enables it and `POST /api/client/push/register` exists. This app does not open ntfy.
+
+Passwords comes from the home-openers row `passwords` and opens `bitwarden://` or the https/server URL. Storage reads `GET /api/client/storage`. Search, Connectors, and Reminders stay off the Home tab until those routes exist. You saves Memory with **Save memory** when `GET /api/client/memory` exists. Install steps: [`docs/PHONE.md`](docs/PHONE.md).
 
 ## Connection status
 
