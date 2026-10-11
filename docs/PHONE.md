@@ -1,10 +1,12 @@
 # Install and test on Atley’s Android phone
 
-Version **1.2.0** (Android `versionCode` 15). This is a native build, not Expo Go. Home VPN, photo backup, and LAN discovery need the APK. It installs over 1.1.2 (`versionCode` 14).
+Version **1.2.1** (Android `versionCode` 18). This is a native build, not Expo Go. Home VPN, photo backup, and LAN discovery need the APK. It installs over 1.2.0 (`versionCode` 15) and 1.1.2 (`versionCode` 14). `versionCode` skips to 18 so it is also above the 0.9.0-beta.9 phone build (17) from the AtleyOS repo.
+
+The launcher, splash, and notification icon use the Atley OS gold mark from `assets/brand/` (first supplied for 0.9.0-beta.9). `npm test` and `npm run build:android:local` run `scripts/check-app-assets.mjs`, which fails if app.json points at a missing or old icon, if the stock Expo template icon is back, or if a tab has no bundled icon image.
 
 This phone is a primary AtleyOS interface. Chat, the inbox, passwords, and storage live here. Notices stay in this app. It does not open ntfy or any other notice app.
 
-Tab icons (Chat, Home, You, Inbox, Settings) are drawn in the app. They do not use an icon font, so a missing Ionicons or Material font cannot leave empty boxes on Android or iOS. The Inbox tab uses the check glyph.
+Tab icons (Chat, Home, You, Inbox, Settings) are bundled PNG images. They do not use an icon font, so a missing Ionicons or Material font cannot leave empty boxes on Android or iOS. Builds before 1.2.0 set no tab icon at all, so React Navigation drew its `⏷` placeholder, which Android shows as a boxed X. The Inbox tab uses the check glyph.
 
 The private server repo was not readable while this was written. Away `https://atleyos.atley.llc/api/client/health` was up on 2026-10-09. Pairing and Chat still need a device token from a dashboard QR.
 
@@ -20,7 +22,7 @@ export ANDROID_HOME="$HOME/.local/android"
 npm run build:android:local
 ```
 
-The APK is `dist/AtleyOSClient-1.2.0-preview.apk`. Copy it to the phone and allow install from that source. It installs over 1.1.2 (`versionCode` 14).
+The APK is `dist/AtleyOSClient-1.2.1-preview.apk`. Copy it to the phone and allow install from that source. It installs over 1.2.0 and 1.1.2. The build script always runs `expo prebuild` (without `--clean`) so icon and splash changes reach `android/`.
 
 EAS, if you already have a logged-in account:
 

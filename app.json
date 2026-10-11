@@ -2,16 +2,16 @@
   "expo": {
     "name": "AtleyOS Client",
     "slug": "AtleyOSClient",
-    "version": "1.2.0",
+    "version": "1.2.1",
     "orientation": "portrait",
-    "icon": "./assets/icon.png",
+    "icon": "./assets/brand/atleyos-icon.png",
     "scheme": "atleyos",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "splash": {
-      "image": "./assets/splash-icon.png",
+      "image": "./assets/brand/atleyos-splash.png",
       "resizeMode": "contain",
-      "backgroundColor": "#0f1419"
+      "backgroundColor": "#070809"
     },
     "ios": {
       "supportsTablet": true,
@@ -33,16 +33,16 @@
           "fetch",
           "processing"
         ]
-      }
+      },
+      "icon": "./assets/brand/atleyos-icon.png"
     },
     "android": {
       "package": "com.atleyos.client",
-      "versionCode": 15,
+      "versionCode": 18,
       "adaptiveIcon": {
-        "backgroundColor": "#0f1419",
-        "foregroundImage": "./assets/android-icon-foreground.png",
-        "backgroundImage": "./assets/android-icon-background.png",
-        "monochromeImage": "./assets/android-icon-monochrome.png"
+        "foregroundImage": "./assets/brand/atleyos-adaptive-foreground.png",
+        "monochromeImage": "./assets/brand/atleyos-adaptive-monochrome.png",
+        "backgroundColor": "#070809"
       },
       "permissions": [
         "CAMERA",
@@ -110,7 +110,13 @@
         }
       ],
       "expo-local-authentication",
-      "expo-notifications"
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/brand/atleyos-notification.png",
+          "color": "#D4A23F"
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true
@@ -119,6 +125,11 @@
       "router": {
         "origin": false
       }
+    },
+    "backgroundColor": "#070809",
+    "web": {
+      "favicon": "./assets/brand/atleyos-favicon.png",
+      "bundler": "metro"
     }
   }
 }

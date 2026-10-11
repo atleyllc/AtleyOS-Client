@@ -27,6 +27,9 @@ function run(cmd, args, opts = {}) {
   if (r.status !== 0) process.exit(r.status || 1);
 }
 
+// Refuse to build with a stale, missing, or template icon, or a tab with no icon.
+run(process.execPath, [path.join(root, "scripts/check-app-assets.mjs")]);
+
 if (!fs.existsSync(path.join(javaHome, "bin/java"))) {
   console.error(`JAVA_HOME missing java: ${javaHome}`);
   process.exit(1);
@@ -43,8 +46,16 @@ const env = {
   PATH: `${path.join(javaHome, "bin")}${path.delimiter}${path.join(androidHome, "platform-tools")}${path.delimiter}${process.env.PATH || ""}`,
 };
 
-if (!fs.existsSync(path.join(root, "android"))) {
-  run("npx", ["expo", "prebuild", "--platform", "android"], { env });
+// Always prebuild. Skipping it when android/ already exists kept the old
+// launcher icon, splash, and manifest from an earlier build. Without --clean,
+// prebuild keeps android/app/debug.keystore, so the APK still installs over
+// the previous one.
+const keystore = path.join(root, "android/app/debug.keystore");
+const keyBefore = fs.existsSync(keystore) ? fs.readFileSync(keystore) : null;
+run("npx", ["expo", "prebuild", "--platform", "android", "--no-install"], { env });
+if (keyBefore && !keyBefore.equals(fs.readFileSync(keystore))) {
+  console.error("prebuild replaced android/app/debug.keystore; the APK would not install over the old one.");
+  process.exit(1);
 }
 
 fs.writeFileSync(
