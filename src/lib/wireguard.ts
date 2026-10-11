@@ -387,20 +387,20 @@ export async function ensureTunnel(opts: EnsureTunnelOpts = {}): Promise<TunnelS
  * Away apps on autopilot: off on home Wi‑Fi, on everywhere else.
  * Called on launch, on foreground, and when the network changes.
  */
-let lastHomeCheck = 0;
-const HOME_RECHECK_MS = 90_000;
-
 export async function syncAwayTunnel(opts: { networkChanged?: boolean } = {}): Promise<TunnelState> {
   if (await isTunnelPaused()) return getTunnelState();
   const wg = loadPatchedModule();
-  // Wi‑Fi to home Wi‑Fi doesn't change the network type, so a foreground
-  // re-checks home now and then instead of trusting a connected tunnel forever.
-  const recheck = Date.now() - lastHomeCheck > HOME_RECHECK_MS;
-  if (wg && !opts.networkChanged && !recheck) {
+  if (wg && !opts.networkChanged) {
     try {
       await ensureNativeInitialized(wg);
       const st = await wg.getStatus();
-      if (st.isConnected || st.status === "CONNECTED") return ensureTunnel();
+      // A tunnel that reaches home stays up. One that doesn't (for example
+      // Wi‑Fi to home Wi‑Fi, where the router can't loop back) gets re-checked:
+      // that switch doesn't change the network type, so nothing else would.
+      if (st.isConnected || st.status === "CONNECTED") {
+        const { overlayAnswers } = await import("./awayAppsClient");
+        if (await overlayAnswers()) return ensureTunnel();
+      }
     } catch {
       /* fall through */
     }
@@ -413,7 +413,6 @@ export async function syncAwayTunnel(opts: { networkChanged?: boolean } = {}): P
       /* not connected */
     }
   }
-  lastHomeCheck = Date.now();
   const { homeLanAnswers } = await import("./awayAppsClient");
   if (await homeLanAnswers()) {
     const state: TunnelState = {

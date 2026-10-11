@@ -35,13 +35,25 @@ export async function checkAwayApps(): Promise<AwayAppsStatus> {
  */
 export async function homeLanAnswers(timeoutMs = 1500): Promise<boolean> {
   const session = await loadSession();
-  const host = hostFromApiBase(session?.lanApiBase);
-  if (!session || !host) return false;
+  if (!session || !hostFromApiBase(session.lanApiBase)) return false;
+  return homeAnswersAt(session.lanApiBase, timeoutMs);
+}
+
+/** True when home answers through the VPN, on its overlay address. */
+export async function overlayAnswers(timeoutMs = 2500): Promise<boolean> {
+  const session = await loadSession();
+  if (!session) return false;
+  return homeAnswersAt(session.overlayApiBase || "http://10.55.0.1:8765", timeoutMs);
+}
+
+async function homeAnswersAt(base: string, timeoutMs: number): Promise<boolean> {
+  const session = await loadSession();
+  if (!session?.deviceId || !session.apiToken) return false;
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
     const nonce = makeNonce();
-    const res = await fetch(`${session.lanApiBase}/api/client/home-probe`, {
+    const res = await fetch(`${base}/api/client/home-probe`, {
       method: "POST",
       headers: { Accept: "application/json", "Content-Type": "application/json" },
       body: JSON.stringify({ device_id: session.deviceId, nonce }),
