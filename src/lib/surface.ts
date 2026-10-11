@@ -8,7 +8,7 @@ import { parseCoding, type CodingSnapshot } from "./coding";
 import { parseConnectors, type ConnectorRow } from "./connectors";
 import { parseMachines, type MachinesSnapshot } from "./machines";
 import { parseUsage, type UsageSnapshot } from "./aiUsage";
-import { parseInbox, parseQuietHours, type InboxItem, type QuietHours } from "./inbox";
+import { parseInbox, parseQuietHours, type InboxAction, type InboxItem, type QuietHours } from "./inbox";
 import { parseReminders, parseRoutines, type ReminderRow, type RoutineRow } from "./reminders";
 import { parseSearch, type SearchSnapshot } from "./searchParse";
 import { parseStorage, type StorageSnapshot } from "./storage";
@@ -121,18 +121,72 @@ export async function loadNotifications(): Promise<{ supported: boolean; items: 
   return { supported: true, items: parseInbox(res.body).items, error: res.error };
 }
 
+/** One Inbox row by id (the event stream and pushes carry only the id). */
+export async function fetchNotification(id: string): Promise<InboxItem | null> {
+  if (!id) return null;
+  try {
+    const body = await apiFetch<{ notification?: unknown }>(`/api/client/notifications/${encodeURIComponent(id)}`);
+    const row = body && typeof body === "object" ? (body as { notification?: unknown }).notification : null;
+    return parseInbox({ notifications: row ? [row] : [] }).items[0] || null;
+  } catch {
+    return null;
+  }
+}
+
+export type NotificationActionResult = {
+  ok: boolean;
+  /** Fix it: the first chat message, written by home. */
+  prompt: string;
+  title: string;
+  /** Ask a follow-up: the chat that holds Cursor's plan. */
+  conversationId: string;
+  message: string;
+};
+
+function actionResult(body: unknown): NotificationActionResult {
+  const root = body && typeof body === "object" ? (body as Record<string, unknown>) : {};
+  const result = root.result && typeof root.result === "object" ? (root.result as Record<string, unknown>) : {};
+  const str = (v: unknown) => (typeof v === "string" ? v : "");
+  return {
+    ok: result.ok !== false,
+    prompt: str(result.prompt),
+    title: str(result.title),
+    conversationId: str(result.conversation_id),
+    message: str(result.message) || str(result.summary),
+  };
+}
+
+/**
+ * POST /api/client/notifications/<id>/act {action}. Older homes only took
+ * /<id>/snooze and /<id>/dismiss; those are tried when /act is missing.
+ * Returns null when this home has no notification actions at all.
+ */
 export async function postNotificationAction(
   id: string,
-  action: "snooze" | "dismiss",
+  action: InboxAction,
   minutes = 15,
-): Promise<boolean> {
-  const path = `/api/client/notifications/${encodeURIComponent(id)}/${action}`;
-  const body = action === "snooze" ? JSON.stringify({ minutes }) : "{}";
+): Promise<NotificationActionResult | null> {
+  const base = `/api/client/notifications/${encodeURIComponent(id)}`;
   try {
-    await apiFetch(path, { method: "POST", body });
-    return true;
+    const body = await apiFetch(`${base}/act`, {
+      method: "POST",
+      body: JSON.stringify({ action, snooze_minutes: minutes }),
+    });
+    return actionResult(body);
   } catch (error) {
-    if (routeMissing(error)) return false;
+    if (!routeMissing(error) || (action !== "snooze" && action !== "dismiss")) {
+      if (routeMissing(error)) return null;
+      throw error;
+    }
+  }
+  try {
+    const body = await apiFetch(`${base}/${action}`, {
+      method: "POST",
+      body: action === "snooze" ? JSON.stringify({ minutes }) : "{}",
+    });
+    return actionResult(body);
+  } catch (error) {
+    if (routeMissing(error)) return null;
     throw error;
   }
 }

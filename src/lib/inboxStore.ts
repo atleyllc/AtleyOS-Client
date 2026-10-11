@@ -47,3 +47,11 @@ export async function snoozeNotice(id: string, until: number): Promise<void> {
   if (!found) next.push({ id, kind: "alert", title: "Home sent an alert.", body: "", createdAt: null, openUrl: "", actions: ["dismiss"], snoozeUntil: until });
   await writeAll(next);
 }
+
+/** Drop stored notices home no longer lists as open (resolved, dismissed, or handled elsewhere). */
+export async function keepOnlyNotices(ids: string[]): Promise<void> {
+  const keep = new Set(ids);
+  const all = await readAll();
+  const next = all.filter((item) => keep.has(item.id));
+  if (next.length !== all.length) await writeAll(next);
+}

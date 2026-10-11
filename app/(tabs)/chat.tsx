@@ -1,24 +1,33 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
   FlatList,
+  Image,
   KeyboardAvoidingView,
   Platform,
   Pressable,
+  Share,
   StyleSheet,
   Text,
   TextInput,
   View,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
 } from "react-native";
+import * as Clipboard from "expo-clipboard";
+import * as DocumentPicker from "expo-document-picker";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Network from "expo-network";
-import { router } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
 import {
-  ApiError,
+  ATTACHMENT_LIMITS,
   NotPairedError,
   UNPAIRED_MESSAGE,
   chatCompletionsStream,
+  chatStopControl,
+  uploadAttachment,
+  type ChatStopControl,
   clearPreferredBase,
   clientStatus,
   probeReachability,
@@ -29,8 +38,10 @@ import { Icon } from "../../src/components/Icon";
 import {
   EmptyState,
   Group,
+  GroupLabel,
   IconButton,
   ListRow,
+  MenuButton,
   Note,
   ScreenTitle,
   Sheet,
@@ -42,10 +53,22 @@ import { decideApproval, fetchApprovals } from "../../src/lib/approvals";
 import { saveThread, loadThreads } from "../../src/lib/chatHistory";
 import { threadTitle, type LocalThread } from "../../src/lib/chatThreads";
 import { fetchConversation, fetchConversations } from "../../src/lib/conversations";
+import {
+  archiveChat,
+  deleteChat,
+  exportChat,
+  friendlyChatError,
+  groupChats,
+  listChats,
+  pinChat,
+  renameChat,
+  truncateChat,
+  type ChatRow,
+} from "../../src/lib/chatManage";
 import type { ServerConversation } from "../../src/lib/conversationParse";
 import { runObservationCycle } from "../../src/lib/observation";
 import { loadSession } from "../../src/lib/session";
-import type { ChatMessage } from "../../src/lib/types";
+import type { ChatAttachment, ChatMessage } from "../../src/lib/types";
 import { colors, radius, space } from "../../src/lib/theme";
 
 const SUGGESTIONS = [
@@ -54,8 +77,33 @@ const SUGGESTIONS = [
   "Fix the StrikeNote sync bug",
 ];
 
+type Pending = ChatAttachment & { uploading?: boolean; failed?: string };
+
+function formatSize(bytes: number): string {
+  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  if (bytes >= 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${bytes} B`;
+}
+
+function plainExport(title: string, messages: ChatMessage[]): string {
+  return [`# ${title}`, ...messages.map((m) => `**${m.role === "user" ? "You" : "AtleyOS"}:** ${m.content}`)].join("\n\n");
+}
+
 export default function ChatScreen() {
+  const params = useLocalSearchParams<{ send?: string; draft?: string; conversation?: string; fresh?: string; nonce?: string }>();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [rows, setRows] = useState<ChatRow[] | null>(null);
+  const [query, setQuery] = useState("");
+  const [showArchived, setShowArchived] = useState(false);
+  const [menuChat, setMenuChat] = useState<ChatRow | null>(null);
+  const [renaming, setRenaming] = useState<{ id: string; title: string } | null>(null);
+  const [pending, setPending] = useState<Pending[]>([]);
+  const [editing, setEditing] = useState<{ messageId: string } | null>(null);
+  const [atBottom, setAtBottom] = useState(true);
+  const [msgMenu, setMsgMenu] = useState<{ message: ChatMessage; index: number } | null>(null);
+  const listRef = useRef<FlatList<ChatMessage>>(null);
+  const stopRef = useRef<ChatStopControl | null>(null);
+  const handledNonce = useRef("");
   const [threadId, setThreadId] = useState("");
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [threads, setThreads] = useState<LocalThread[]>([]);
@@ -121,8 +169,21 @@ export default function ChatScreen() {
     }
   }, []);
 
-  const refreshHistory = useCallback(async () => {
+  const refreshHistory = useCallback(async (q = "", archived = false) => {
     setThreads(await loadThreads());
+    try {
+      const managed = await listChats({ q, archived });
+      if (managed) {
+        setRows(managed);
+        setServerThreads([]);
+        setServerNote("");
+        return;
+      }
+      setRows(null);
+    } catch (error) {
+      setServerNote(friendlyChatError(error).text);
+      return;
+    }
     try {
       const remote = await fetchConversations();
       setServerThreads(remote.supported ? remote.conversations : []);
@@ -167,8 +228,14 @@ export default function ChatScreen() {
     setMessages(thread.messages);
   }
 
+  async function openRow(row: ChatRow) {
+    await openServer({ id: row.id, title: row.title, messages: [] } as unknown as ServerConversation);
+  }
+
   async function openServer(conversation: ServerConversation) {
     setHistoryOpen(false);
+    setEditing(null);
+    setPending([]);
     setBusy(true);
     try {
       const detail =
@@ -177,6 +244,7 @@ export default function ChatScreen() {
       setThreadId(conversation.id);
       setConversationId(conversation.id);
       setMessages(next);
+      setTimeout(() => listRef.current?.scrollToEnd({ animated: false }), 50);
       if (!next.length) {
         setServerNote("That conversation didn’t include messages.");
       }
@@ -193,45 +261,240 @@ export default function ChatScreen() {
     setConversationId(null);
     setMessages([]);
     setInput("");
+    setPending([]);
+    setEditing(null);
   }
 
-  async function send() {
-    const text = input.trim();
-    if (!text || busy) return;
-    const id = threadId || `local-${Date.now()}`;
-    const next = [...messages, { role: "user" as const, content: text }];
+  /** Pull home's copy so messages carry ids (Regenerate / Edit) and attachments. */
+  async function syncFromHome(cid: string | null) {
+    if (!cid) return;
+    try {
+      const detail = await fetchConversation(cid);
+      if (detail?.messages?.length && detail.messages.some((m) => m.id)) setMessages(detail.messages);
+    } catch {
+      /* the local copy is fine */
+    }
+  }
+
+  async function pickFiles() {
+    if (pending.length >= ATTACHMENT_LIMITS.perMessage) {
+      Alert.alert("Attachments", `Up to ${ATTACHMENT_LIMITS.perMessage} files per message.`);
+      return;
+    }
+    const picked = await DocumentPicker.getDocumentAsync({ type: "*/*", multiple: true, copyToCacheDirectory: true });
+    if (picked.canceled) return;
+    for (const asset of picked.assets.slice(0, ATTACHMENT_LIMITS.perMessage - pending.length)) {
+      const mime = asset.mimeType || "application/octet-stream";
+      const cap = mime.startsWith("image/") ? ATTACHMENT_LIMITS.imageBytes : ATTACHMENT_LIMITS.fileBytes;
+      if (asset.size && asset.size > cap) {
+        Alert.alert("Too big", `${asset.name} is ${formatSize(asset.size)}. The limit is ${formatSize(cap)}.`);
+        continue;
+      }
+      const temp = `local-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+      const row: Pending = {
+        id: temp,
+        name: asset.name,
+        mime,
+        size: asset.size || 0,
+        kind: mime.startsWith("image/") ? "image" : "file",
+        localUri: asset.uri,
+        uploading: true,
+      };
+      setPending((current) => [...current, row]);
+      try {
+        const saved = await uploadAttachment({ uri: asset.uri, name: asset.name, mime, conversationId });
+        setPending((current) => current.map((p) => (p.id === temp ? { ...p, ...saved, localUri: asset.uri, uploading: false } : p)));
+      } catch (error) {
+        setPending((current) =>
+          current.map((p) => (p.id === temp ? { ...p, uploading: false, failed: friendlyChatError(error).text } : p)),
+        );
+      }
+    }
+  }
+
+  function stop() {
+    stopRef.current?.stop();
+  }
+
+  async function copyMessage(message: ChatMessage) {
+    await Clipboard.setStringAsync(message.content);
+  }
+
+  function lastUserIndex(before = messages.length): number {
+    for (let i = before - 1; i >= 0; i--) if (messages[i].role === "user") return i;
+    return -1;
+  }
+
+  /** Regenerate / Retry: drop the last answer at home and ask again. */
+  async function regenerate() {
+    const index = lastUserIndex();
+    if (index < 0 || busy) return;
+    const user = messages[index];
+    const base = messages.slice(0, index);
+    if (conversationId && user.id) {
+      try {
+        const cut = await truncateChat(conversationId, user.id);
+        await send({
+          text: cut.text || user.content,
+          attachments: user.attachments || [],
+          base,
+        });
+        return;
+      } catch (error) {
+        Alert.alert("Regenerate", friendlyChatError(error).text);
+        return;
+      }
+    }
+    await send({ text: user.content, attachments: user.attachments || [], base });
+  }
+
+  function startEdit(message: ChatMessage) {
+    if (!message.id || !conversationId) {
+      setInput(message.content);
+      return;
+    }
+    setEditing({ messageId: message.id });
+    setInput(message.content);
+    setPending((message.attachments || []).map((a) => ({ ...a })));
+  }
+
+  async function shareChat(id: string | null, title: string) {
+    let text = "";
+    if (id) {
+      try {
+        text = await exportChat(id);
+      } catch {
+        text = "";
+      }
+    }
+    if (!text) text = plainExport(title, messages);
+    await Share.share({ message: text, title });
+  }
+
+  function confirmDelete(id: string, title: string) {
+    Alert.alert("Delete this chat?", `“${title}” and its attachments are removed from home. This can’t be undone.`, [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Delete",
+        style: "destructive",
+        onPress: () =>
+          void (async () => {
+            try {
+              await deleteChat(id);
+              if (id === conversationId) newChat();
+              await refreshHistory(query, showArchived);
+            } catch (error) {
+              Alert.alert("Delete", friendlyChatError(error).text);
+            }
+          })(),
+      },
+    ]);
+  }
+
+  async function chatAction(row: { id: string; title: string; pinned?: boolean; archived?: boolean }, action: string) {
+    setMenuChat(null);
+    try {
+      if (action === "rename") setRenaming({ id: row.id, title: row.title });
+      else if (action === "pin") await pinChat(row.id, !row.pinned);
+      else if (action === "archive") {
+        await archiveChat(row.id, !row.archived);
+        if (row.id === conversationId && !row.archived) newChat();
+      } else if (action === "share") await shareChat(row.id, row.title);
+      else if (action === "delete") confirmDelete(row.id, row.title);
+      if (action === "pin" || action === "archive") await refreshHistory(query, showArchived);
+    } catch (error) {
+      Alert.alert("Chat", friendlyChatError(error).text);
+    }
+  }
+
+  async function saveRename() {
+    if (!renaming) return;
+    const title = renaming.title.trim();
+    if (!title) return;
+    try {
+      await renameChat(renaming.id, title);
+      setRenaming(null);
+      await refreshHistory(query, showArchived);
+    } catch (error) {
+      Alert.alert("Rename", friendlyChatError(error).text);
+    }
+  }
+
+  function onScroll(event: NativeSyntheticEvent<NativeScrollEvent>) {
+    const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
+    setAtBottom(contentSize.height - contentOffset.y - layoutMeasurement.height < 80);
+  }
+
+  async function send(override?: { text: string; attachments: ChatAttachment[]; base: ChatMessage[]; fresh?: boolean }) {
+    const text = (override ? override.text : input).trim();
+    const ready = override ? override.attachments : pending.filter((p) => !p.uploading && !p.failed);
+    if ((!text && !ready.length) || busy) return;
+    if (!override && pending.some((p) => p.uploading)) {
+      Alert.alert("Attachments", "Wait for the files to finish uploading.");
+      return;
+    }
+    let base = override ? override.base : messages;
+    if (!override && editing && conversationId) {
+      try {
+        await truncateChat(conversationId, editing.messageId);
+        const cut = messages.findIndex((m) => m.id === editing.messageId);
+        if (cut >= 0) base = messages.slice(0, cut);
+      } catch (error) {
+        Alert.alert("Edit", friendlyChatError(error).text);
+        return;
+      }
+    }
+    setEditing(null);
+    const fresh = Boolean(override?.fresh);
+    const cid = fresh ? null : conversationId;
+    const id = (!fresh && threadId) || `local-${Date.now()}`;
+    const userMessage: ChatMessage = { role: "user", content: text, ...(ready.length ? { attachments: ready } : {}) };
+    const next = [...base, userMessage];
     setThreadId(id);
     setMessages(next);
-    setInput("");
+    if (!override) {
+      setInput("");
+      setPending([]);
+    }
     setBusy(true);
+    setAtBottom(true);
+    const control = chatStopControl();
+    stopRef.current = control;
     let assistant = "";
     let extras: Pick<ChatMessage, "toolCalls" | "citations" | "embeddingRoute"> = {};
     try {
       clearPreferredBase();
-      const result = await chatCompletionsStream(next, (content, live) => {
-        assistant = content;
-        extras = {
-          toolCalls: live.toolCalls,
-          citations: live.citations,
-          embeddingRoute: live.embeddingRoute,
-        };
-        setMessages([...next, { role: "assistant", content, ...extras }]);
-      });
+      const result = await chatCompletionsStream(
+        next.map((m) => ({ role: m.role, content: m.content })),
+        (content, live) => {
+          assistant = content;
+          extras = {
+            toolCalls: live.toolCalls,
+            citations: live.citations,
+            embeddingRoute: live.embeddingRoute,
+          };
+          setMessages([...next, { role: "assistant", content, ...extras }]);
+        },
+        {
+          conversationId: cid,
+          chatId: id,
+          attachmentIds: ready.map((a) => a.id).filter((a) => a.startsWith("att_")),
+          control,
+        },
+      );
       assistant = result.content;
       extras = {
         toolCalls: result.toolCalls,
         citations: result.citations,
         embeddingRoute: result.embeddingRoute,
       };
+      if (result.stopped) assistant = `${assistant}${assistant ? "\n\n" : ""}_(Stopped)_`;
       if (!assistant && !result.toolCalls.length && !result.citations.length) {
         assistant = "Home replied with nothing.";
       }
       setNeedsRepair(false);
-      const stored = [
-        ...next,
-        { role: "assistant" as const, content: assistant, ...extras },
-      ];
-      const nextConversationId = result.conversationId || conversationId;
+      const stored = [...next, { role: "assistant" as const, content: assistant, ...extras }];
+      const nextConversationId = result.conversationId || cid;
       setConversationId(nextConversationId);
       setMessages(stored);
       setThreads(
@@ -243,41 +506,47 @@ export default function ChatScreen() {
           conversationId: nextConversationId,
         }),
       );
+      // Home may still be finishing the stopped reply; give it a moment before reading ids back.
+      setTimeout(() => void syncFromHome(nextConversationId), result.stopped ? 1500 : 300);
       await refreshStatus();
     } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
-      const unpaired = error instanceof NotPairedError;
-      const authFail =
-        !unpaired &&
-        ((error instanceof ApiError && error.status === 401) ||
-          /auth failed|unauthorized|stale pair/i.test(msg));
-      if (unpaired) {
+      const friendly = friendlyChatError(error);
+      if (friendly.pair) {
         setConnected(false);
         setNeedsRepair(false);
         setStatusLine("Not paired");
-        setBanner({ kind: "unpaired", message: msg });
-      } else if (authFail) {
+        setBanner({ kind: "unpaired", message: error instanceof Error ? error.message : String(error) });
+      } else if (friendly.repair) {
         setNeedsRepair(true);
-        setStatusLine("Connected path rejected auth — re-pair on home Wi‑Fi");
+        setStatusLine("Home rejected this phone — re-pair on home Wi‑Fi");
       }
-      const content = unpaired
-        ? `${msg}\n\nTap Pair with home above.`
-        : authFail
-          ? `${msg}\n\nTap Re-pair below (home Wi‑Fi), scan a fresh dashboard QR, then send again.`
-          : error instanceof ApiError && error.status === 400
-            ? msg
-            : msg.startsWith("Couldn’t reach home")
-              ? msg
-              : `Could not reach home: ${msg}`;
-      const stored = [...next, { role: "assistant" as const, content }];
+      const stored = [...next, { role: "assistant" as const, content: friendly.text, error: true }];
       setMessages(stored);
-      setThreads(
-        await saveThread({ id, title: threadTitle(stored), updatedAt: Date.now(), messages: stored }),
-      );
+      setThreads(await saveThread({ id, title: threadTitle(stored), updatedAt: Date.now(), messages: stored, conversationId: cid }));
     } finally {
+      stopRef.current = null;
       setBusy(false);
     }
   }
+
+  // Fix it (Inbox) sends its prompt in a fresh chat; Ask a follow-up opens the plan's chat with a draft.
+  useEffect(() => {
+    const nonce = String(params.nonce || "");
+    if (!nonce || handledNonce.current === nonce) return;
+    handledNonce.current = nonce;
+    void (async () => {
+      if (params.conversation) {
+        await openServer({ id: String(params.conversation), title: "", messages: [] } as unknown as ServerConversation);
+      } else if (params.fresh) {
+        newChat();
+      }
+      if (params.draft) setInput(String(params.draft));
+      if (params.send) {
+        await send({ text: String(params.send), attachments: [], base: [], fresh: !params.conversation });
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [params.nonce]);
 
   async function decideInline(id: string, decision: "allow" | "deny") {
     try {
@@ -288,7 +557,11 @@ export default function ChatScreen() {
     }
   }
 
-  const canSend = Boolean(input.trim()) && !busy;
+  const readyCount = pending.filter((p) => !p.uploading && !p.failed).length;
+  const canSend = (Boolean(input.trim()) || readyCount > 0) && !busy && !pending.some((p) => p.uploading);
+  const currentRow = rows?.find((row) => row.id === conversationId) || null;
+  const currentTitle = currentRow?.title || (messages.length ? threadTitle(messages) : "New chat");
+  const lastAssistant = messages.length && messages[messages.length - 1].role === "assistant" ? messages.length - 1 : -1;
 
   return (
     <KeyboardAvoidingView
@@ -301,8 +574,37 @@ export default function ChatScreen() {
           title="Chat"
           right={
             <>
-              <IconButton icon="history" label="Chat history" onPress={() => setHistoryOpen(true)} testID="chat-history" />
+              <IconButton
+                icon="history"
+                label="Chat history"
+                onPress={() => {
+                  setHistoryOpen(true);
+                  void refreshHistory(query, showArchived);
+                }}
+                testID="chat-history"
+              />
               <IconButton icon="new-chat" label="New chat" onPress={newChat} testID="chat-new" />
+              {messages.length ? (
+                <MenuButton
+                  title="This chat"
+                  testID="chat-menu"
+                  actions={[
+                    { label: "Share or export", icon: "share", onPress: () => void shareChat(conversationId, currentTitle) },
+                    ...(conversationId
+                      ? [
+                          { label: "Rename", icon: "edit" as const, onPress: () => setRenaming({ id: conversationId, title: currentTitle }) },
+                          {
+                            label: currentRow?.pinned ? "Unpin" : "Pin",
+                            icon: "pin" as const,
+                            onPress: () => void chatAction({ id: conversationId, title: currentTitle, pinned: currentRow?.pinned }, "pin"),
+                          },
+                          { label: "Archive", icon: "archive" as const, onPress: () => void chatAction({ id: conversationId, title: currentTitle }, "archive") },
+                          { label: "Delete", icon: "trash" as const, danger: true, onPress: () => confirmDelete(conversationId, currentTitle) },
+                        ]
+                      : []),
+                  ]}
+                />
+              ) : null}
             </>
           }
         />
@@ -354,19 +656,63 @@ export default function ChatScreen() {
       ) : null}
 
       <FlatList
+        ref={listRef}
         style={styles.list}
         data={messages}
+        onScroll={onScroll}
+        scrollEventThrottle={100}
+        onContentSizeChange={() => {
+          if (atBottom) listRef.current?.scrollToEnd({ animated: false });
+        }}
         keyExtractor={(_, index) => String(index)}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="interactive"
         contentContainerStyle={messages.length ? styles.listContent : styles.listEmpty}
-        renderItem={({ item }) => (
-          <View style={[styles.bubble, item.role === "user" ? styles.user : styles.assistant]}>
-            <ChatMessageBody
-              message={item}
-              pendingApprovalIds={pendingApprovalIds}
-              onDecide={(id, decision) => void decideInline(id, decision)}
-            />
+        renderItem={({ item, index }) => (
+          <View style={item.role === "user" ? styles.userWrap : styles.assistantWrap}>
+            <Pressable
+              onLongPress={() => setMsgMenu({ message: item, index })}
+              delayLongPress={300}
+              style={[styles.bubble, item.role === "user" ? styles.user : styles.assistant, item.error && styles.errorBubble]}
+              accessibilityHint="Long-press for Copy, Edit, or Regenerate"
+            >
+              {item.attachments?.length ? (
+                <View style={styles.attachRow}>
+                  {item.attachments.map((att) =>
+                    att.kind === "image" && att.localUri ? (
+                      <Image key={att.id} source={{ uri: att.localUri }} style={styles.thumb} />
+                    ) : (
+                      <View key={att.id} style={styles.fileChip}>
+                        <Icon name={att.kind === "image" ? "image" : "file"} size={14} color={colors.muted} />
+                        <Text style={styles.fileChipText} numberOfLines={1}>
+                          {att.name}
+                        </Text>
+                      </View>
+                    ),
+                  )}
+                </View>
+              ) : null}
+              <ChatMessageBody
+                message={item}
+                pendingApprovalIds={pendingApprovalIds}
+                onDecide={(id, decision) => void decideInline(id, decision)}
+              />
+            </Pressable>
+            {item.role === "assistant" && !busy ? (
+              <View style={styles.msgActions}>
+                <Pressable onPress={() => void copyMessage(item)} accessibilityRole="button" accessibilityLabel="Copy reply" hitSlop={6}>
+                  <Icon name="copy" size={15} color={colors.faint} />
+                </Pressable>
+                {index === lastAssistant ? (
+                  <Pressable onPress={() => void regenerate()} accessibilityRole="button" accessibilityLabel={item.error ? "Retry" : "Regenerate"} hitSlop={6}>
+                    <View style={styles.inlineAction}>
+                      <Icon name="refresh" size={15} color={item.error ? colors.accent : colors.faint} />
+                      {item.error ? <Text style={styles.retryText}>Retry</Text> : null}
+                    </View>
+                  </Pressable>
+                ) : null}
+              </View>
+            ) : null}
           </View>
         )}
         ListFooterComponent={
@@ -407,7 +753,74 @@ export default function ChatScreen() {
         }
       />
 
+      {!atBottom && messages.length ? (
+        <Pressable
+          style={styles.toBottom}
+          onPress={() => {
+            listRef.current?.scrollToEnd({ animated: true });
+            setAtBottom(true);
+          }}
+          accessibilityRole="button"
+          accessibilityLabel="Scroll to the newest message"
+          testID="chat-scroll-bottom"
+        >
+          <Icon name="arrow-down" size={18} color={colors.text} />
+        </Pressable>
+      ) : null}
+
+      {editing ? (
+        <View style={styles.editBar}>
+          <Text style={styles.editText}>Editing your message. Sending replaces it and everything after it.</Text>
+          <Pressable
+            onPress={() => {
+              setEditing(null);
+              setInput("");
+              setPending([]);
+            }}
+            accessibilityRole="button"
+          >
+            <Text style={styles.retryText}>Cancel</Text>
+          </Pressable>
+        </View>
+      ) : null}
+
+      {pending.length ? (
+        <View style={styles.tray} testID="chat-pending">
+          {pending.map((p) => (
+            <View key={p.id} style={[styles.fileChip, p.failed && styles.chipFailed]}>
+              {p.kind === "image" && p.localUri ? (
+                <Image source={{ uri: p.localUri }} style={styles.chipThumb} />
+              ) : (
+                <Icon name="file" size={14} color={colors.muted} />
+              )}
+              <Text style={styles.fileChipText} numberOfLines={1}>
+                {p.failed ? `${p.name}: ${p.failed}` : `${p.name} · ${formatSize(p.size)}`}
+              </Text>
+              {p.uploading ? <ActivityIndicator size="small" color={colors.muted} /> : null}
+              <Pressable
+                onPress={() => setPending((current) => current.filter((x) => x.id !== p.id))}
+                accessibilityRole="button"
+                accessibilityLabel={`Remove ${p.name}`}
+                hitSlop={8}
+              >
+                <Icon name="close" size={14} color={colors.muted} />
+              </Pressable>
+            </View>
+          ))}
+        </View>
+      ) : null}
+
       <View style={styles.composer}>
+        <Pressable
+          style={styles.attach}
+          onPress={() => void pickFiles()}
+          disabled={busy}
+          accessibilityRole="button"
+          accessibilityLabel="Attach a photo or file"
+          testID="chat-attach"
+        >
+          <Icon name="paperclip" size={20} color={busy ? colors.faint : colors.muted} />
+        </Pressable>
         <TextInput
           style={styles.input}
           value={input}
@@ -421,37 +834,92 @@ export default function ChatScreen() {
           blurOnSubmit={false}
           testID="chat-input"
         />
-        <Pressable
-          style={[styles.send, !canSend && styles.sendIdle]}
-          onPress={() => void send()}
-          disabled={!canSend}
-          accessibilityRole="button"
-          accessibilityLabel="Send"
-          testID="chat-send"
-        >
-          {busy ? <ActivityIndicator color="#fff" size="small" /> : <Icon name="send" size={20} color="#fff" />}
-        </Pressable>
+        {busy ? (
+          <Pressable
+            style={[styles.send, styles.stopBtn]}
+            onPress={stop}
+            accessibilityRole="button"
+            accessibilityLabel="Stop"
+            testID="chat-stop"
+          >
+            <Icon name="stop" size={18} color="#fff" />
+          </Pressable>
+        ) : (
+          <Pressable
+            style={[styles.send, !canSend && styles.sendIdle]}
+            onPress={() => void send()}
+            disabled={!canSend}
+            accessibilityRole="button"
+            accessibilityLabel="Send"
+            testID="chat-send"
+          >
+            <Icon name="send" size={20} color="#fff" />
+          </Pressable>
+        )}
       </View>
 
-      <Sheet visible={historyOpen} onClose={() => setHistoryOpen(false)} title="Chats">
+      <Sheet visible={historyOpen} onClose={() => setHistoryOpen(false)} title={showArchived ? "Archived chats" : "Chats"}>
+        <TextInput
+          style={styles.search}
+          value={query}
+          onChangeText={setQuery}
+          onSubmitEditing={() => void refreshHistory(query, showArchived)}
+          onEndEditing={() => void refreshHistory(query, showArchived)}
+          placeholder="Search chats"
+          placeholderTextColor={colors.faint}
+          returnKeyType="search"
+          autoCapitalize="none"
+          testID="chat-search"
+        />
         <Group>
           <ListRow icon="new-chat" title="New chat" onPress={newChat} />
         </Group>
-        {threads.length ? (
-          <Group>
-            {threads.map((thread) => (
-              <ListRow
-                key={thread.id}
-                icon="phone"
-                tone="muted"
-                title={thread.title}
-                subtitle="On this phone"
-                onPress={() => openLocal(thread)}
-              />
-            ))}
-          </Group>
+        {rows
+          ? groupChats(rows).map((group) => (
+              <View key={group.label}>
+                <GroupLabel>{group.label}</GroupLabel>
+                <Group>
+                  {group.rows.map((row) => (
+                    <ListRow
+                      key={row.id}
+                      icon={row.pinned ? "pin" : "chat"}
+                      tone="muted"
+                      title={row.title}
+                      subtitle={row.match && row.match !== "title" ? row.match : row.preview}
+                      onPress={() => void openRow(row)}
+                      right={
+                        <IconButton
+                          icon="more"
+                          label={`More for ${row.title}`}
+                          color={colors.muted}
+                          onPress={() => {
+                            setHistoryOpen(false);
+                            setMenuChat(row);
+                          }}
+                        />
+                      }
+                    />
+                  ))}
+                </Group>
+              </View>
+            ))
+          : null}
+        {rows && rows.length === 0 ? (
+          <Text style={styles.sheetEmpty}>{query ? "No chats match." : showArchived ? "No archived chats." : "No chats at home yet."}</Text>
         ) : null}
-        {serverThreads.length ? (
+        {threads.filter((t) => !t.conversationId).length && !showArchived ? (
+          <View>
+            <GroupLabel>On this phone</GroupLabel>
+            <Group>
+              {threads
+                .filter((t) => !t.conversationId)
+                .map((thread) => (
+                  <ListRow key={thread.id} icon="phone" tone="muted" title={thread.title} onPress={() => openLocal(thread)} />
+                ))}
+            </Group>
+          </View>
+        ) : null}
+        {!rows && serverThreads.length ? (
           <Group>
             {serverThreads.map((conversation) => (
               <ListRow
@@ -466,8 +934,88 @@ export default function ChatScreen() {
           </Group>
         ) : null}
         {serverNote ? <Note>{serverNote}</Note> : null}
-        {threads.length === 0 && serverThreads.length === 0 && !serverNote ? (
-          <Text style={styles.sheetEmpty}>No earlier chats yet.</Text>
+        {rows ? (
+          <Pressable
+            onPress={() => {
+              const next = !showArchived;
+              setShowArchived(next);
+              void refreshHistory(query, next);
+            }}
+            accessibilityRole="button"
+            style={styles.archivedLink}
+          >
+            <Text style={styles.retryText}>{showArchived ? "Back to chats" : "Archived chats"}</Text>
+          </Pressable>
+        ) : null}
+      </Sheet>
+
+      <Sheet visible={menuChat != null} onClose={() => setMenuChat(null)} title={menuChat?.title}>
+        {menuChat ? (
+          <Group>
+            <ListRow icon="edit" title="Rename" onPress={() => void chatAction(menuChat, "rename")} />
+            {!menuChat.archived ? (
+              <ListRow icon="pin" title={menuChat.pinned ? "Unpin" : "Pin"} onPress={() => void chatAction(menuChat, "pin")} />
+            ) : null}
+            <ListRow icon="share" title="Share or export" onPress={() => void chatAction(menuChat, "share")} />
+            <ListRow
+              icon="archive"
+              title={menuChat.archived ? "Restore from archive" : "Archive"}
+              onPress={() => void chatAction(menuChat, "archive")}
+            />
+            <ListRow icon="trash" danger title="Delete" onPress={() => void chatAction(menuChat, "delete")} />
+          </Group>
+        ) : null}
+      </Sheet>
+
+      <Sheet visible={renaming != null} onClose={() => setRenaming(null)} title="Rename chat">
+        <TextInput
+          style={styles.search}
+          value={renaming?.title || ""}
+          onChangeText={(title) => setRenaming((current) => (current ? { ...current, title } : current))}
+          onSubmitEditing={() => void saveRename()}
+          autoFocus
+          maxLength={120}
+          placeholder="Chat name"
+          placeholderTextColor={colors.faint}
+          testID="chat-rename-input"
+        />
+        <Pressable style={styles.saveBtn} onPress={() => void saveRename()} accessibilityRole="button">
+          <Text style={styles.saveText}>Save</Text>
+        </Pressable>
+      </Sheet>
+
+      <Sheet visible={msgMenu != null} onClose={() => setMsgMenu(null)} title={msgMenu?.message.role === "user" ? "Your message" : "Reply"}>
+        {msgMenu ? (
+          <Group>
+            <ListRow
+              icon="copy"
+              title="Copy"
+              onPress={() => {
+                void copyMessage(msgMenu.message);
+                setMsgMenu(null);
+              }}
+            />
+            {msgMenu.message.role === "user" && !busy ? (
+              <ListRow
+                icon="edit"
+                title="Edit and resend"
+                onPress={() => {
+                  startEdit(msgMenu.message);
+                  setMsgMenu(null);
+                }}
+              />
+            ) : null}
+            {msgMenu.index === lastAssistant && !busy ? (
+              <ListRow
+                icon="refresh"
+                title={msgMenu.message.error ? "Retry" : "Regenerate"}
+                onPress={() => {
+                  setMsgMenu(null);
+                  void regenerate();
+                }}
+              />
+            ) : null}
+          </Group>
         ) : null}
       </Sheet>
     </KeyboardAvoidingView>
@@ -483,9 +1031,66 @@ const styles = StyleSheet.create({
   list: { flex: 1 },
   listContent: { padding: space.md, gap: space.sm },
   listEmpty: { flexGrow: 1, justifyContent: "center", padding: space.md },
-  bubble: { paddingVertical: 10, paddingHorizontal: 14, borderRadius: 18, maxWidth: "86%" },
-  user: { alignSelf: "flex-end", backgroundColor: colors.accentDim, borderBottomRightRadius: 6 },
-  assistant: { alignSelf: "flex-start", backgroundColor: colors.surface, borderBottomLeftRadius: 6 },
+  bubble: { paddingVertical: 10, paddingHorizontal: 14, borderRadius: 18 },
+  userWrap: { alignSelf: "flex-end", maxWidth: "86%" },
+  assistantWrap: { alignSelf: "flex-start", maxWidth: "92%", gap: 4 },
+  user: { backgroundColor: colors.accentDim, borderBottomRightRadius: 6 },
+  assistant: { backgroundColor: colors.surface, borderBottomLeftRadius: 6 },
+  errorBubble: { backgroundColor: colors.dangerSoft },
+  msgActions: { flexDirection: "row", gap: space.md, paddingHorizontal: space.xs },
+  inlineAction: { flexDirection: "row", alignItems: "center", gap: 4 },
+  retryText: { color: colors.accent, fontWeight: "700", fontSize: 13 },
+  attachRow: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginBottom: 6 },
+  thumb: { width: 120, height: 120, borderRadius: 10, backgroundColor: colors.bg },
+  fileChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: colors.surfaceRaised,
+    borderRadius: 10,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    maxWidth: 260,
+  },
+  chipFailed: { backgroundColor: colors.dangerSoft },
+  chipThumb: { width: 22, height: 22, borderRadius: 4 },
+  fileChipText: { color: colors.text, fontSize: 12, flexShrink: 1 },
+  tray: { flexDirection: "row", flexWrap: "wrap", gap: 6, paddingHorizontal: space.sm, paddingTop: space.xs },
+  editBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: space.sm,
+    paddingHorizontal: space.md,
+    paddingVertical: space.xs,
+    backgroundColor: colors.accentSoft,
+  },
+  editText: { color: colors.text, fontSize: 12, flex: 1 },
+  toBottom: {
+    position: "absolute",
+    right: space.md,
+    bottom: 76,
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: colors.surfaceRaised,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
+  },
+  attach: { width: 40, height: 44, alignItems: "center", justifyContent: "center" },
+  stopBtn: { backgroundColor: colors.danger },
+  search: {
+    backgroundColor: colors.surface,
+    color: colors.text,
+    borderRadius: 12,
+    paddingHorizontal: space.md,
+    paddingVertical: 10,
+    fontSize: 15,
+  },
+  archivedLink: { alignItems: "center", paddingVertical: space.sm },
+  saveBtn: { backgroundColor: colors.accent, borderRadius: 12, paddingVertical: 12, alignItems: "center" },
+  saveText: { color: "#fff", fontWeight: "700" },
   typing: { flexDirection: "row", alignItems: "center", gap: space.xs },
   typingText: { color: colors.muted, fontSize: 14 },
   suggestions: { gap: space.xs, alignSelf: "stretch", marginTop: space.sm },

@@ -65,9 +65,24 @@ export type HomeApp = {
   up?: boolean;
 };
 
+export type ChatAttachment = {
+  id: string;
+  name: string;
+  mime: string;
+  size: number;
+  kind: string;
+  /** Local preview (file:// uri) while the message is still on this phone. */
+  localUri?: string;
+};
+
 export type ChatMessage = {
   role: "user" | "assistant" | "system";
   content: string;
+  /** Home's message id (Regenerate / Edit need it). */
+  id?: string;
+  attachments?: ChatAttachment[];
+  /** Home answered with an error, not a reply. */
+  error?: boolean;
   toolCalls?: import("./chatTools").ToolCallView[];
   citations?: import("./searchParse").SearchHit[];
   embeddingRoute?: string;

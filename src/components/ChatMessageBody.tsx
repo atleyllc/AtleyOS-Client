@@ -3,6 +3,7 @@ import { deleteConfirmCopy } from "../lib/chatTools";
 import { cloudEmbeddingWarning } from "../lib/searchParse";
 import { openCitationUrl } from "../lib/homeOpeners";
 import type { ChatMessage } from "../lib/types";
+import { Markdown } from "./Markdown";
 import { colors, space } from "../lib/theme";
 
 const URL_RE = /https?:\/\/[^\s)]+/g;
@@ -19,7 +20,15 @@ export function ChatMessageBody({
   const warning = cloudEmbeddingWarning(message.embeddingRoute || "");
   return (
     <View>
-      {message.content ? <Text style={styles.bubbleText}>{message.content}</Text> : null}
+      {message.content ? (
+        message.role === "assistant" ? (
+          <Markdown text={message.content} color={message.error ? colors.danger : colors.text} />
+        ) : (
+          <Text style={styles.bubbleText} selectable>
+            {message.content}
+          </Text>
+        )
+      ) : null}
       {(message.content.match(URL_RE) || []).map((url) => (
         <Pressable key={url} onPress={() => void openCitationUrl(url).catch(() => Linking.openURL(url))}>
           <Text style={styles.link}>{url}</Text>

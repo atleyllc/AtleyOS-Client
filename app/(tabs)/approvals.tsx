@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Alert, Linking, StyleSheet, Text, TextInput, View } from "react-native";
-import { useFocusEffect } from "expo-router";
+import { router, useFocusEffect } from "expo-router";
 import {
   EmptyState,
   Group,
@@ -31,11 +31,12 @@ import { onInboxChanged } from "../../src/lib/inboxEvents";
 import {
   parseQuietHours,
   snoozeUntil,
+  whenLabel,
   type InboxAction,
   type InboxItem,
   type QuietHours,
 } from "../../src/lib/inbox";
-import { dismissNotice, loadVisibleNotices, snoozeNotice } from "../../src/lib/inboxStore";
+import { dismissNotice, keepOnlyNotices, loadVisibleNotices, snoozeNotice } from "../../src/lib/inboxStore";
 import { loadQuietHours, saveQuietHours } from "../../src/lib/quietStore";
 import { loadNotifications, loadServerQuietHours, postNotificationAction, saveServerQuietHours } from "../../src/lib/surface";
 import { colors, space } from "../../src/lib/theme";
@@ -46,7 +47,14 @@ const ACTION_LABEL: Record<InboxAction, string> = {
   snooze: "Snooze 15 min",
   open: "Open",
   dismiss: "Dismiss",
+  fix: "Fix it",
+  retry: "Retry",
+  approve_plan: "Approve plan",
+  followup: "Ask a follow-up",
 };
+
+/** Buttons shown on the card, in this order. Anything else goes in the ⋯ menu. */
+const CARD_ACTIONS: InboxAction[] = ["approve_plan", "fix", "retry", "followup", "dismiss"];
 
 export default function InboxScreen() {
   const [supported, setSupported] = useState(true);
@@ -90,9 +98,14 @@ export default function InboxScreen() {
     }
     const approvalIds = new Set(approvalRows.map((item) => item.id));
     const merged = new Map<string, InboxItem>();
-    for (const item of local) {
-      if (item.kind === "approval" || approvalIds.has(item.id)) continue;
-      merged.set(item.id, item);
+    if (remote.supported && !remote.error) {
+      // Home's list is the truth: rows it resolved or that were handled elsewhere go away here too.
+      await keepOnlyNotices(remote.items.map((item) => item.id));
+    } else {
+      for (const item of local) {
+        if (item.kind === "approval" || approvalIds.has(item.id)) continue;
+        merged.set(item.id, item);
+      }
     }
     for (const item of remote.items) {
       if (item.kind === "approval") continue;
@@ -140,6 +153,35 @@ export default function InboxScreen() {
           return;
         }
         await Linking.openURL(item.openUrl);
+        return;
+      }
+      if (action === "fix") {
+        const out = await postNotificationAction(item.id, "fix");
+        const prompt =
+          out?.prompt ||
+          `Help me fix this alert.\n\nAlert: ${item.title}\nDetails: ${item.body}\n\nCheck what's wrong first and tell me what you found. Ask me before changing anything.`;
+        router.push({ pathname: "/chat", params: { send: prompt, fresh: "1", nonce: String(Date.now()) } });
+        return;
+      }
+      if (action === "followup") {
+        const out = await postNotificationAction(item.id, "followup");
+        router.push({
+          pathname: "/chat",
+          params: { conversation: out?.conversationId || "", draft: "About the plan: ", nonce: String(Date.now()) },
+        });
+        return;
+      }
+      if (action === "retry" || action === "approve_plan") {
+        const out = await postNotificationAction(item.id, action);
+        if (!out) throw new Error("This home doesn’t take that action from the phone yet. Use the dashboard.");
+        setLastDecision(
+          out.message ||
+            (action === "retry"
+              ? "Backup started. It runs at low priority; this clears when it finishes."
+              : "Plan approved. Cursor is building it; progress shows in Chat and here."),
+        );
+        if (action === "approve_plan") setNotices((current) => current.filter((row) => row.id !== item.id));
+        void load();
         return;
       }
       if (action === "snooze") {
@@ -217,35 +259,60 @@ export default function InboxScreen() {
       ))}
 
       {notices.length ? <GroupLabel>Notices</GroupLabel> : null}
-      {notices.length ? (
-        <Group>
-          {notices.map((item) => {
-            const primary = item.actions.find((a) => a === "approve" || a === "open");
-            const rest = item.actions.filter((a) => a !== primary);
-            return (
-              <ListRow
-                key={`${item.kind}-${item.id}`}
-                icon={kindIcon(item.kind)}
-                tone={kindTone(item.kind)}
-                title={item.title}
-                subtitle={[labelForKind(item.kind), item.body].filter(Boolean).join(" · ")}
-                onPress={primary ? () => void act(item, primary) : undefined}
-                right={
+      {notices.map((item) => {
+        const buttons = CARD_ACTIONS.filter((a) => item.actions.includes(a));
+        const menu = item.actions.filter((a) => !buttons.includes(a));
+        const when = whenLabel(item.createdAt);
+        const text = item.explanation || item.body;
+        return (
+          <Section
+            key={`${item.kind}-${item.id}`}
+            title={item.title}
+            icon={kindIcon(item.kind)}
+            right={
+              <View style={styles.cardRight}>
+                <StatusChip label={labelForKind(item.kind, item.source)} tone={kindTone(item.kind)} />
+                {menu.length ? (
                   <MenuButton
                     title={item.title}
-                    actions={rest.map((action) => ({
+                    actions={menu.map((action) => ({
                       label: ACTION_LABEL[action],
                       danger: action === "deny",
-                      icon: action === "dismiss" ? "close" : action === "snooze" ? "clock" : action === "deny" ? "close" : "check",
+                      icon: action === "snooze" ? "clock" : action === "deny" ? "close" : action === "open" ? "external" : "check",
                       onPress: () => void act(item, action),
                     }))}
                   />
-                }
-              />
-            );
-          })}
-        </Group>
-      ) : null}
+                ) : null}
+              </View>
+            }
+          >
+            {when ? <Text style={styles.when}>{when}</Text> : null}
+            {text ? <Text style={ui.body}>{text}</Text> : null}
+            {buttons.length ? (
+              <View style={styles.buttonRow}>
+                {buttons.map((action, index) =>
+                  index === 0 && action !== "dismiss" ? (
+                    <PrimaryButton
+                      key={action}
+                      label={ACTION_LABEL[action]}
+                      busy={busyId === item.id}
+                      disabled={busyId != null}
+                      onPress={() => void act(item, action)}
+                    />
+                  ) : (
+                    <SecondaryButton
+                      key={action}
+                      label={ACTION_LABEL[action]}
+                      disabled={busyId != null}
+                      onPress={() => void act(item, action)}
+                    />
+                  ),
+                )}
+              </View>
+            ) : null}
+          </Section>
+        );
+      })}
 
       {nothing ? (
         <EmptyState icon="inbox" title="You’re all caught up" body="Approvals, reminders, and alerts from home show up here." />
@@ -294,7 +361,16 @@ export default function InboxScreen() {
   );
 }
 
-function labelForKind(kind: InboxItem["kind"]): string {
+function labelForKind(kind: InboxItem["kind"], source = ""): string {
+  const named: Record<string, string> = {
+    backup: "Backup",
+    storage: "Storage",
+    health: "Health",
+    machines: "Machines",
+    coding: "Cursor",
+    connector: "Connector",
+  };
+  if (named[source]) return named[source];
   if (kind === "storage_alert") return "Storage";
   if (kind === "reminder") return "Reminder";
   if (kind === "routine") return "Routine";
@@ -320,4 +396,7 @@ const styles = StyleSheet.create({
   actions: { flexDirection: "row", gap: space.sm },
   flex: { flex: 1, gap: space.xxs },
   fieldLabel: { color: colors.muted, fontSize: 12, fontWeight: "600" },
+  cardRight: { flexDirection: "row", alignItems: "center", gap: space.xs },
+  when: { color: colors.muted, fontSize: 12 },
+  buttonRow: { flexDirection: "row", flexWrap: "wrap", gap: space.sm },
 });

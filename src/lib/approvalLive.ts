@@ -6,13 +6,14 @@ import {
   emitApprovalsChanged,
   setApprovalEventsConnected,
 } from "./approvalEvents";
-import { notifyApprovalWaiting, notifyInboxKind } from "./approvalNotice";
+import { notifyApprovalWaiting, notifyInboxItem } from "./approvalNotice";
 import { pollApprovalsOnce } from "./approvalWatch";
 import { fetchApprovals, loadSeenApprovalIds, rememberApprovalIds } from "./approvals";
 import { ApiError, apiFetch, clientStatus, subscribeClientEvents } from "./api";
 import { emitInboxChanged } from "./inboxEvents";
 import { noticeFromEvent } from "./inbox";
 import { rememberNotice } from "./inboxStore";
+import { fetchNotification } from "./surface";
 import { isExpoPushToken, pushRegisterBody } from "./pushGate";
 import { readPushPlan } from "./pushMechanism";
 import { loadSession } from "./session";
@@ -122,12 +123,21 @@ function kindFromPushData(data: unknown): string {
   return typeof kind === "string" ? kind.trim() : "";
 }
 
-async function handleNotice(name: string, payload: unknown): Promise<void> {
+/** The stream carries only the id: read the row so the notice says what happened. */
+async function fullNotice(name: string, payload: unknown) {
   const item = noticeFromEvent(name, payload);
+  if (!item) return null;
+  const full = await fetchNotification(item.id);
+  if (full && full.status && full.status !== "unread") return null; // already handled or cleared
+  return full || item;
+}
+
+async function handleNotice(name: string, payload: unknown): Promise<void> {
+  const item = await fullNotice(name, payload);
   if (!item) return;
   await rememberNotice(item);
   emitInboxChanged();
-  await notifyInboxKind(item.kind, item.id);
+  await notifyInboxItem(item);
 }
 
 /** SSE while the process is open, plus push registration when home enables it. */
@@ -161,8 +171,12 @@ export function startApprovalLive(): { stop: () => void; reconnect: () => void }
     const id = approvalIdFromPushData(data);
     const kind = kindFromPushData(data);
     if (kind && kind !== "approval") {
-      const item = noticeFromEvent(kind, data);
+      const nid =
+        data && typeof data === "object" && typeof (data as { notification_id?: unknown }).notification_id === "string"
+          ? (data as { notification_id: string }).notification_id
+          : "";
       void (async () => {
+        const item = await fullNotice(kind, nid ? { ...(data as object), id: nid } : data);
         if (item) await rememberNotice(item);
         emitInboxChanged();
       })().catch(() => undefined);

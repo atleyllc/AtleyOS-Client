@@ -572,22 +572,62 @@ function chatHttpError(status: number, raw: string): ApiError {
   return new ApiError(chatErrorCopy(code) || message || code || `HTTP ${status}`, status, raw);
 }
 
+export type ChatSendOptions = {
+  /** Home's conversation id: keeps this thread in the same chat at home. */
+  conversationId?: string | null;
+  /** This phone's thread id: a new thread starts a new chat at home. */
+  chatId?: string;
+  attachmentIds?: string[];
+  /** Call `stop()` to end the reply early; what arrived so far is kept. */
+  control?: ChatStopControl;
+};
+
+export type ChatStopControl = { stopped: boolean; stop: () => void; onStop?: () => void };
+
+export function chatStopControl(): ChatStopControl {
+  const control: ChatStopControl = {
+    stopped: false,
+    stop() {
+      control.stopped = true;
+      control.onStop?.();
+    },
+  };
+  return control;
+}
+
+function chatBody(messages: { role: string; content: string }[], stream: boolean, opts: ChatSendOptions) {
+  return {
+    model: "atleyos",
+    messages,
+    stream,
+    ...(opts.conversationId ? { conversation_id: opts.conversationId } : {}),
+    ...(opts.attachmentIds?.length ? { attachment_ids: opts.attachmentIds } : {}),
+  };
+}
+
+function chatHeaders(opts: ChatSendOptions): Record<string, string> {
+  return opts.chatId && !opts.conversationId ? { "X-AtleyOS-Chat-Id": opts.chatId } : {};
+}
+
 /**
  * Ask home to stream, then fall back to one JSON reply when this server
  * does not stream. `model: "atleyos"` lets the server use the active chat model.
- * A 400 is returned as-is. The phone stores conversation_id and does not send it back.
+ * A 400 is returned as-is. Stop keeps the partial reply (home stops generating
+ * when the connection closes).
  */
 export async function chatCompletionsStream(
   messages: { role: string; content: string }[],
   onDelta: (content: string, extras: ChatStreamReduction) => void,
-): Promise<ChatStreamReduction> {
+  opts: ChatSendOptions = {},
+): Promise<ChatStreamReduction & { stopped?: boolean }> {
   const session = await loadSession();
   if (!session) throw new NotPairedError(UNPAIRED_MESSAGE);
   try {
-    return await postChatStream(session, messages, onDelta);
+    return await postChatStream(session, messages, onDelta, opts);
   } catch (error) {
+    if (opts.control?.stopped) throw error;
     if (error instanceof ApiError && (error.status === 401 || STREAM_UNSUPPORTED.has(error.status))) {
-      const done = await chatCompletions(messages);
+      const done = await chatCompletionsOnce(messages, opts);
       if (done.content || done.toolCalls.length || done.citations.length) onDelta(done.content, done);
       return done;
     }
@@ -595,28 +635,67 @@ export async function chatCompletionsStream(
   }
 }
 
+async function chatCompletionsOnce(
+  messages: { role: string; content: string }[],
+  opts: ChatSendOptions,
+): Promise<ChatStreamReduction> {
+  const out = await apiFetch<unknown>("/v1/chat/completions", {
+    method: "POST",
+    body: JSON.stringify(chatBody(messages, false, opts)),
+    headers: chatHeaders(opts),
+  });
+  const extras = extrasFromChatJson(out);
+  const content =
+    out && typeof out === "object" && Array.isArray((out as { choices?: unknown }).choices)
+      ? String(((out as { choices: { message?: { content?: string } }[] }).choices[0]?.message?.content) || "")
+      : "";
+  return {
+    content,
+    streamed: false,
+    conversationId: conversationIdFromJson(out),
+    toolCalls: extras.toolCalls,
+    citations: extras.citations,
+    embeddingRoute: extras.embeddingRoute,
+  };
+}
+
 async function postChatStream(
   session: Session,
   messages: { role: string; content: string }[],
   onDelta: (content: string, extras: ChatStreamReduction) => void,
-): Promise<ChatStreamReduction> {
+  opts: ChatSendOptions,
+): Promise<ChatStreamReduction & { stopped?: boolean }> {
   const token = session.apiToken;
   const picked = await pickReachableBase(session, token);
   if (!picked.bases.length) throw await failureFor(session, picked.probed);
   const base = picked.bases[0];
-  const payload = JSON.stringify({ model: "atleyos", messages, stream: true });
-  const result = await new Promise<ChatStreamReduction & { status: number; raw: string }>((resolve, reject) => {
+  const payload = JSON.stringify(chatBody(messages, true, opts));
+  const result = await new Promise<ChatStreamReduction & { status: number; raw: string; stopped?: boolean }>((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open("POST", `${base}/v1/chat/completions`);
     xhr.setRequestHeader("Accept", "text/event-stream, application/json");
     xhr.setRequestHeader("Content-Type", "application/json");
     if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+    for (const [key, value] of Object.entries(chatHeaders(opts))) xhr.setRequestHeader(key, value);
     xhr.timeout = 180000;
+    let last: ChatStreamReduction = reduceChatStream("", false);
     const pump = (final: boolean) => {
       const reduced = reduceChatStream(xhr.responseText || "", final);
+      last = reduced;
       if (reduced.content || reduced.toolCalls.length || reduced.citations.length) onDelta(reduced.content, reduced);
       return reduced;
     };
+    if (opts.control) {
+      opts.control.onStop = () => {
+        try {
+          pump(false);
+        } catch {
+          /* keep what we had */
+        }
+        xhr.abort();
+        resolve({ ...last, status: 200, raw: "", stopped: true });
+      };
+    }
     xhr.onprogress = () => {
       pump(false);
     };
@@ -628,6 +707,7 @@ async function postChatStream(
     };
     xhr.send(payload);
   });
+  if (result.stopped) return { ...result, stopped: true };
   if (result.status === 401 || STREAM_UNSUPPORTED.has(result.status)) {
     throw new ApiError(`HTTP ${result.status}`, result.status, result.raw);
   }
@@ -643,6 +723,69 @@ async function postChatStream(
     citations: result.citations,
     embeddingRoute: result.embeddingRoute,
   };
+}
+
+/** Limits home enforces; checked here first so a big file fails fast. */
+export const ATTACHMENT_LIMITS = { imageBytes: 20 * 1024 * 1024, fileBytes: 10 * 1024 * 1024, perMessage: 10 };
+
+/**
+ * POST the raw bytes to /api/client/attachments. Returns home's attachment row.
+ * `uri` is a file:// uri from the picker (copied to the app cache).
+ */
+export async function uploadAttachment(file: {
+  uri: string;
+  name: string;
+  mime: string;
+  conversationId?: string | null;
+}): Promise<{ id: string; name: string; mime: string; size: number; kind: string }> {
+  const session = await loadSession();
+  if (!session) throw new NotPairedError(UNPAIRED_MESSAGE);
+  const blob = await (await fetch(file.uri)).blob();
+  const bases = await orderedBases(session);
+  if (!bases.length) throw await failureFor(session, bases);
+  const query = file.conversationId ? `?conversation_id=${encodeURIComponent(file.conversationId)}` : "";
+  let lastErr: unknown = null;
+  for (const base of bases) {
+    try {
+      const res = await rawFetch(base, `/api/client/attachments${query}`, {
+        method: "POST",
+        body: blob,
+        token: session.apiToken,
+        timeoutMs: 120000,
+        headers: {
+          "Content-Type": file.mime || "application/octet-stream",
+          "X-AtleyOS-Filename": encodeURIComponent(file.name || "upload"),
+        },
+      });
+      const text = await res.text();
+      let body: Record<string, unknown> = {};
+      try {
+        body = text ? (JSON.parse(text) as Record<string, unknown>) : {};
+      } catch {
+        body = {};
+      }
+      if (!res.ok) {
+        const msg =
+          res.status === 404
+            ? "This home server doesn’t take attachments yet. Update AtleyOS at home."
+            : String(body.message || body.error || `HTTP ${res.status}`);
+        throw new ApiError(msg, res.status, body);
+      }
+      rememberBase(base);
+      const row = (body.attachment || {}) as Record<string, unknown>;
+      return {
+        id: String(row.id || ""),
+        name: String(row.name || file.name),
+        mime: String(row.mime || file.mime),
+        size: Number(row.size || blob.size || 0),
+        kind: String(row.kind || (file.mime.startsWith("image/") ? "image" : "file")),
+      };
+    } catch (error) {
+      lastErr = error;
+      if (error instanceof ApiError) throw error;
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : await failureFor(session, bases);
 }
 
 const EVENT_STALL_MS = 45_000;

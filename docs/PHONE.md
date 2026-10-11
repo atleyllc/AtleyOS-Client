@@ -1,6 +1,6 @@
 # Install and test on Atley’s Android phone
 
-Version **1.2.2** (Android `versionCode` 19). This is a native build, not Expo Go. Away apps, photo backup, and LAN discovery need the APK. It installs over 1.2.1 (18), 1.2.0 (`versionCode` 15) and 1.1.2 (`versionCode` 14). `versionCode` skips to 18 so it is also above the 0.9.0-beta.9 phone build (17) from the AtleyOS repo.
+Version **1.2.4** (Android `versionCode` 21; 1.2.3/20 is the monorepo move). This is a native build, not Expo Go. Away apps, photo backup, and LAN discovery need the APK. It installs over 1.2.1 (18), 1.2.0 (`versionCode` 15) and 1.1.2 (`versionCode` 14). `versionCode` skips to 18 so it is also above the 0.9.0-beta.9 phone build (17) from the AtleyOS repo.
 
 The launcher, splash, and notification icon use the Atley OS gold mark from `assets/brand/` (first supplied for 0.9.0-beta.9). `npm test` and `npm run build:android:local` run `scripts/check-app-assets.mjs`, which fails if app.json points at a missing or old icon, if the stock Expo template icon is back, or if a tab has no bundled icon image.
 
@@ -41,7 +41,7 @@ Phone on the same Wi‑Fi as the server.
 5. The model chip still lists installed models. Switching calls `POST /api/client/models/active` with `{"role":"conversation","model":"<name>"}`. Chat itself still sends `model: "atleyos"`.
 6. Home tab: **Open Photos / Files / Media / Home** uses the LAN address. Files is port `10081`. Media is port `8097`. Status says up or down when home sends it. An app must not open `https://atleyos.atley.llc`.
 7. You: **Save memory** is the filled button. Notes and **Forget** are inside **Notes**. A forgotten id that home does not have says so. It does not try a second delete.
-8. Inbox: approvals from home, plus reminder, routine, and alert rows when the event stream sends them. Allow and Deny. A storage alert can only be dismissed. Quiet hours are on this screen. The notice says “Something is waiting.”, “A reminder is ready.”, “A routine finished.”, or “Home sent an alert.” and does not include the row text. With the app open, new rows arrive from `GET /api/client/events`. Coming back to the app reconnects that stream.
+8. Inbox: approvals from home, plus reminder, routine, alert, and Cursor plan rows. Each row shows what happened, when, and what to do, with the buttons home offers: **Fix it** (opens a new chat with the alert's details), **Retry** (backups), **Dismiss**, and for Cursor plans **Approve plan** / **Ask a follow-up**. A storage alert can only be fixed in chat or dismissed. Rows home resolved on its own disappear. Quiet hours are on this screen. The phone's notice shows the real title and one-line reason for alerts home writes itself (backup, storage, health, machines, approvals, Cursor jobs), e.g. “Backup failed — The backup drive is not mounted. Plug it in, then tap Retry.” Reminders and routines stay generic (“A reminder is ready.”) because they can quote your own content. With the app open, new rows arrive from `GET /api/client/events`; the phone reads the row by id before it shows the notice.
 9. Home: Passwords opens Bitwarden when it is installed, otherwise the `https_url` or `server_url` from the passwords row. It does not open a LAN or Home VPN address. Storage, Search, Connectors, and Reminders appear only when those routes answer. Search, Connectors, and Reminders stay hidden while the server returns 404.
 10. Approval push stays off until you turn **Approval push** on in the home dashboard (Remote Access), or home enables phone notices. Registering the phone does not flip that switch. After it is on, and `POST /api/client/push/register` exists, a closed app can receive a notice whose data is only an id. Opening the app loads the real row. If home names ntfy or another app, this phone skips that and keeps notices here.
 11. Settings → **Check connection** names the address that answered.
@@ -54,6 +54,17 @@ Leave home Wi‑Fi (cellular). Home VPN stays off.
 2. If the tunnel is stopped, Chat names `https://atleyos.atley.llc` and says the tunnel is not up. It must not sit on `127.0.0.1` or hang only on the LAN address.
 3. Home apps that have no Away URL will say they need home Wi‑Fi or Home VPN. Do not point Immich or Nextcloud at `https://atleyos.atley.llc` — that host is the client API only.
 4. Optional: Settings → Advanced → Turn on Home VPN, then open a home app that only has a VPN address. Turn it off again. Normal internet should return.
+
+## Chat (1.2.4)
+
+- **Chats list** (history button): chats from home with auto titles, previews, and Today / Yesterday / Last 7 days groups. Search, and ⋯ on a chat for Rename, Pin, Share or export, Archive (Archived chats at the bottom), and Delete (asks first; removes the chat's attachments at home too).
+- **Attach** (📎): photos or any file, up to 10 per message. Images up to 20 MB, other files up to 10 MB. Home keeps the original and gives the local vision model a smaller copy.
+- **Stop** while a reply streams; what arrived so far is kept.
+- **Copy** under each reply, code blocks have their own Copy. Long-press a message for Copy, **Edit and resend** (your messages), or **Regenerate** (the last reply). Errors show plainly with **Retry**.
+- Replies render Markdown (headings, lists, code). A ↓ button jumps to the newest message.
+- Each phone thread is its own chat at home (the phone sends the chat's id).
+- Needs AtleyOS 0.10.0b6 or newer at home for attachments and chat management; older homes still chat.
+- New native module: `expo-document-picker`, so this needs a new APK build.
 
 ## Away apps (1.2.2)
 

@@ -77,6 +77,16 @@ export const ICONS = {
   clock: require("../../assets/icons/clock.png"),
   info: require("../../assets/icons/info.png"),
   "log-out": require("../../assets/icons/log-out.png"),
+  "paperclip": require("../../assets/icons/paperclip.png"),
+  "stop": require("../../assets/icons/stop.png"),
+  "edit": require("../../assets/icons/edit.png"),
+  "pin": require("../../assets/icons/pin.png"),
+  "refresh": require("../../assets/icons/refresh.png"),
+  "arrow-down": require("../../assets/icons/arrow-down.png"),
+  "file": require("../../assets/icons/file.png"),
+  "share": require("../../assets/icons/share.png"),
+  "archive": require("../../assets/icons/archive.png"),
+  "image": require("../../assets/icons/image.png"),
 } as const;
 
 export type IconName = keyof typeof ICONS;

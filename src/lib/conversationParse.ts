@@ -2,6 +2,7 @@ import { extrasFromChatJson } from "./chatTools";
 import { threadTitle } from "./chatThreads";
 import type { ToolCallView } from "./chatTools";
 import type { SearchHit } from "./searchParse";
+import type { ChatAttachment } from "./types";
 
 export type ServerMessage = {
   role: "user" | "assistant" | "system";
@@ -9,6 +10,9 @@ export type ServerMessage = {
   toolCalls?: ToolCallView[];
   citations?: SearchHit[];
   embeddingRoute?: string;
+  id?: string;
+  attachments?: ChatAttachment[];
+  error?: boolean;
 };
 
 export type ServerConversation = {
@@ -53,6 +57,25 @@ function readTime(value: unknown): number | null {
   return null;
 }
 
+export function parseAttachments(value: unknown): ChatAttachment[] {
+  if (!Array.isArray(value)) return [];
+  const out: ChatAttachment[] = [];
+  for (const item of value) {
+    const rec = record(item);
+    if (!rec) continue;
+    const id = text(rec.id);
+    if (!id) continue;
+    out.push({
+      id,
+      name: text(rec.name) || text(rec.filename) || "file",
+      mime: text(rec.mime) || text(rec.content_type) || "application/octet-stream",
+      size: typeof rec.size === "number" ? rec.size : Number(rec.size_bytes) || 0,
+      kind: text(rec.kind) || (text(rec.mime).startsWith("image/") ? "image" : "file"),
+    });
+  }
+  return out;
+}
+
 export function parseMessages(value: unknown): ServerMessage[] {
   if (!Array.isArray(value)) return [];
   const out: ServerMessage[] = [];
@@ -65,13 +88,17 @@ export function parseMessages(value: unknown): ServerMessage[] {
       text(rec.text) ||
       text(rec.body) ||
       extras.toolCalls.map((tool) => tool.summary).filter(Boolean).join("\n");
-    if (!content && extras.toolCalls.length === 0 && extras.citations.length === 0) continue;
+    if (!content && extras.toolCalls.length === 0 && extras.citations.length === 0 && !Array.isArray(rec.attachments)) continue;
     const roleRaw = text(rec.role).toLowerCase();
     const role =
       roleRaw === "user" || roleRaw === "owner" ? "user" : roleRaw === "system" ? "system" : "assistant";
+    const attachments = parseAttachments(rec.attachments);
     out.push({
       role,
       content,
+      ...(text(rec.id) ? { id: text(rec.id) } : {}),
+      ...(attachments.length ? { attachments } : {}),
+      ...(rec.error === true ? { error: true } : {}),
       ...(extras.toolCalls.length ? { toolCalls: extras.toolCalls } : {}),
       ...(extras.citations.length ? { citations: extras.citations } : {}),
       ...(extras.embeddingRoute ? { embeddingRoute: extras.embeddingRoute } : {}),
